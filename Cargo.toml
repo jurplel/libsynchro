@@ -1,0 +1,8 @@
+[package]
+name = "libsynchro"
+version = "0.1.0"
+authors = ["jurplel <jurplel@intvhq.com>"]
+edition = "2018"
+license = "MIT"
+
+[dependencies]
