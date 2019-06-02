@@ -1,8 +1,13 @@
 [package]
 name = "libsynchro"
 version = "0.1.0"
-authors = ["jurplel <jurplel@intvhq.com>"]
+authors = ["jurplel <jurplel@interversehq.com>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
+tokio = {version = "0.1", features = ["async-await-preview"]}
+bytes = "0.4"
+
+[dev-dependencies]
+futures = "0.1"
