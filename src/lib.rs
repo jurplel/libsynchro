@@ -39,7 +39,7 @@ impl SynchroConnection {
         })
     }
 
-    pub async fn recieve(&mut self) {
+    async fn recieve(&mut self) {
         let mut buffer = BytesMut::new();
         let mut anticipated_message_length: u16 = 0;
         while let Some(message) = await!(self.framed.next()) {
@@ -68,7 +68,14 @@ impl SynchroConnection {
             }
         }
     }
+
+    pub fn run(mut self) {
+        tokio::run_async(async move {
+            await!(self.recieve());
+        });
+    }
 }
+
 
 // fn handle_data(mut data: std::io::Cursor<&[u8]>) {
 //     let has_arguments = data.get_u8() != 0;

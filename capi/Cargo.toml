@@ -1,0 +1,15 @@
+[package]
+name = "synchro"
+version = "0.1.0"
+authors = ["jurplel <jurplel@interversehq.com>"]
+edition = "2018"
+
+[dependencies]
+libc = "0.2"
+libsynchro = { version = "0.1.0", path = "../" }
+
+[build-dependencies]
+cbindgen = "0.6"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
