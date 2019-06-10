@@ -1,6 +1,7 @@
 #![feature(await_macro, async_await)]
 
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use bytes::{BytesMut, IntoBuf, Buf};
 
@@ -8,25 +9,29 @@ use tokio::net::TcpStream;
 use tokio::codec::{Framed, BytesCodec, Decoder};
 use tokio::prelude::*;
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Command {
-    Invalid = 0,
-    Pause = 1,
-    Seek = 2,
+    Invalid,
+    Pause {paused: bool, percent_pos: f64},
+    Seek {percent_pos: f64, dragged: bool},
 }
 
-impl From<u8> for Command {
-    fn from(num: u8) -> Self {
-        match num {
-            1 => Command::Pause,
-            2 => Command::Seek,
-            _ => Command::Invalid,
-        }
-    }
-}
+// impl From<u8> for Command {
+//     fn from(num: u8) -> Self {
+//         match num {
+//             1 => Command::Pause,
+//             2 => Command::Seek,
+//             _ => Command::Invalid,
+//         }
+//     }
+// }
+
+type ClosureType = Box<Fn(Command) + Send>;
 
 pub struct SynchroConnection {
     framed: Framed<TcpStream, BytesCodec>,
+    callback: ClosureType,
 }
 
 impl SynchroConnection {
@@ -34,9 +39,22 @@ impl SynchroConnection {
         let socket = TcpStream::connect(&addr).wait()?;
         let framed = BytesCodec::new().framed(socket);
 
+        let callback = Box::new(|_| {});
+
         Ok(SynchroConnection {
             framed,
+            callback,
         })
+    }
+
+    pub fn set_callback(&mut self, func: ClosureType) {
+        self.callback = func;
+    }
+
+    pub fn run(mut self) {
+        tokio::run_async(async move {
+            await!(self.recieve());
+        });
     }
 
     async fn recieve(&mut self) {
@@ -65,14 +83,10 @@ impl SynchroConnection {
 
                 anticipated_message_length = 0;
                 buffer.clear(); // remember to remove this
+                
+                (self.callback)(Command::Invalid);
             }
         }
-    }
-
-    pub fn run(mut self) {
-        tokio::run_async(async move {
-            await!(self.recieve());
-        });
     }
 }
 

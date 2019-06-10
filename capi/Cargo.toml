@@ -5,7 +5,6 @@ authors = ["jurplel <jurplel@interversehq.com>"]
 edition = "2018"
 
 [dependencies]
-libc = "0.2"
 libsynchro = { version = "0.1.0", path = "../" }
 
 [build-dependencies]
