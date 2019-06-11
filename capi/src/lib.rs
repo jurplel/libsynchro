@@ -11,7 +11,7 @@ use libsynchro::{Command, SynchroConnection};
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct Context(*const c_void);
+pub struct Context(*mut c_void);
 
 unsafe impl Send for Context {}
 
