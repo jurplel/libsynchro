@@ -29,10 +29,9 @@ pub extern fn synchro_connection_connect(addr: *const c_char, port: u16) -> *mut
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_run(ptr: *mut SynchroConnection)
-{
-    assert!(!ptr.is_null());
+pub extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
     let connection = unsafe {
+        assert!(!ptr.is_null());
         Box::from_raw(ptr)
     };
 
@@ -40,10 +39,24 @@ pub extern fn synchro_connection_run(ptr: *mut SynchroConnection)
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, func: fn(Context, Command), ctx: Context)
-{
-    assert!(!ptr.is_null());
+pub extern fn synchro_connection_send(ptr: *mut SynchroConnection, bytes: *const c_char) {
     let connection = unsafe {
+        assert!(!ptr.is_null());
+        &mut *ptr
+    };
+
+    let bytes = unsafe {
+        assert!(!bytes.is_null());
+        CStr::from_ptr(bytes).to_bytes()
+    };
+
+    connection.send(bytes).unwrap();
+}
+
+#[no_mangle]
+pub extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, func: fn(Context, Command), ctx: Context) {
+    let connection = unsafe {
+        assert!(!ptr.is_null());
         &mut *ptr
     };
 
@@ -53,6 +66,3 @@ pub extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, func:
 
     connection.set_callback(Box::new(callback));
 }
-
-#[allow(dead_code)]
-pub extern fn fix_linking_when_not_using_stdlib() { panic!() }

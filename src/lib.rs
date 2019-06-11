@@ -1,12 +1,15 @@
-#![feature(await_macro, async_await)]
+#![feature(async_await)]
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::pin::Pin;
 
-use bytes::{BytesMut, IntoBuf, Buf};
+use futures::sync::mpsc;
+
+use bytes::{Bytes, BytesMut, IntoBuf, Buf};
 
 use tokio::net::TcpStream;
 use tokio::codec::{Framed, BytesCodec, Decoder};
+use tokio::prelude::stream::*;
 use tokio::prelude::*;
 
 #[repr(C)]
@@ -17,50 +20,63 @@ pub enum Command {
     Seek {percent_pos: f64, dragged: bool},
 }
 
-// impl From<u8> for Command {
-//     fn from(num: u8) -> Self {
-//         match num {
-//             1 => Command::Pause,
-//             2 => Command::Seek,
-//             _ => Command::Invalid,
-//         }
-//     }
-// }
-
-type ClosureType = Box<Fn(Command) + Send>;
+type CallbackClosure = Box<dyn Fn(Command) + Send>;
 
 pub struct SynchroConnection {
-    framed: Framed<TcpStream, BytesCodec>,
-    callback: ClosureType,
+    stream: SplitStream<Framed<TcpStream, BytesCodec>>,
+    unbounded_sender: mpsc::UnboundedSender<Bytes>,
+    send_job: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    callback: Option<CallbackClosure>,
 }
 
 impl SynchroConnection {
-    pub fn connect(addr: SocketAddr) -> Result<Self, Box<std::error::Error>> {
+    pub fn connect(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let socket = TcpStream::connect(&addr).wait()?;
-        let framed = BytesCodec::new().framed(socket);
 
-        let callback = Box::new(|_| {});
+        let framed = BytesCodec::new().framed(socket);
+        let (mut sink, stream) = framed.split();
+
+        let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded::<Bytes>();
+
+        let send_job = async move {
+            while let Some(data) = unbounded_receiver.next().await {
+                let data = data.unwrap();
+                sink.send_async(data).await.unwrap();
+            }
+        };
+
+        let send_job = Box::pin(send_job);
+
+        let callback = None;
 
         Ok(SynchroConnection {
-            framed,
+            stream,
+            unbounded_sender,
+            send_job: Some(send_job),
             callback,
         })
     }
 
-    pub fn set_callback(&mut self, func: ClosureType) {
-        self.callback = func;
+    pub fn set_callback(&mut self, func: CallbackClosure) {
+        self.callback = Some(func);
     }
 
     pub fn run(mut self) {
+        let send_job = self.send_job.take().unwrap();
         tokio::run_async(async move {
-            await!(self.recieve());
+            tokio::spawn_async(send_job);
+            self.receive().await;
         });
     }
 
-    async fn recieve(&mut self) {
+    pub fn send(&mut self, bytes: &[u8]) -> Result<(), mpsc::SendError<Bytes>> {
+        self.unbounded_sender.unbounded_send(Bytes::from(bytes))
+    }
+
+    async fn receive(&mut self) {
         let mut buffer = BytesMut::new();
         let mut anticipated_message_length: u16 = 0;
-        while let Some(message) = await!(self.framed.next()) {
+        while let Some(message) = self.stream.next().await {
             // Add newly received information to the buffer
             buffer.unsplit(message.unwrap());
             
@@ -84,12 +100,11 @@ impl SynchroConnection {
                 anticipated_message_length = 0;
                 buffer.clear(); // remember to remove this
                 
-                (self.callback)(Command::Invalid);
+                (self.callback.as_ref().unwrap())(Command::Invalid);
             }
         }
     }
 }
-
 
 // fn handle_data(mut data: std::io::Cursor<&[u8]>) {
 //     let has_arguments = data.get_u8() != 0;
@@ -101,7 +116,7 @@ impl SynchroConnection {
 
 //     match command {
 //         Command::Invalid => {
-//             println!("Invalid commnad recieved");
+//             println!("Invalid commnad received");
 //         }
 //         Command::Pause => {
 //             let paused = data.get_u8() != 0;
