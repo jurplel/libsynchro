@@ -39,18 +39,13 @@ pub extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_send(ptr: *mut SynchroConnection, bytes: *const c_char) {
+pub extern fn synchro_connection_send(ptr: *mut SynchroConnection, cmd: Command) {
     let connection = unsafe {
         assert!(!ptr.is_null());
         &mut *ptr
     };
 
-    let bytes = unsafe {
-        assert!(!bytes.is_null());
-        CStr::from_ptr(bytes).to_bytes()
-    };
-
-    connection.send(bytes).unwrap();
+    connection.send(cmd).unwrap();
 }
 
 #[no_mangle]

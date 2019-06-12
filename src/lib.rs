@@ -5,7 +5,7 @@ use std::pin::Pin;
 
 use futures::sync::mpsc;
 
-use bytes::{Bytes, BytesMut, IntoBuf, Buf};
+use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
 
 use tokio::net::TcpStream;
 use tokio::codec::{Framed, BytesCodec, Decoder};
@@ -18,6 +18,16 @@ pub enum Command {
     Invalid,
     Pause {paused: bool, percent_pos: f64},
     Seek {percent_pos: f64, dragged: bool},
+}
+
+impl Command {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            Command::Pause {paused: _, percent_pos: _} => 1,
+            Command::Seek {percent_pos: _, dragged: _} => 2,
+            _ => 0,
+        }
+    }
 }
 
 type CallbackClosure = Box<dyn Fn(Command) + Send>;
@@ -69,8 +79,28 @@ impl SynchroConnection {
         });
     }
 
-    pub fn send(&mut self, bytes: &[u8]) -> Result<(), mpsc::SendError<Bytes>> {
-        self.unbounded_sender.unbounded_send(Bytes::from(bytes))
+    pub fn send(&mut self, command: Command) -> Result<(), mpsc::SendError<Bytes>> {
+        let mut bytes = vec![];
+
+        bytes.put_u8(command.to_u8());
+
+        match command {
+            Command::Pause {paused, percent_pos} => { 
+                bytes.put_u8(paused as u8);
+                bytes.put_f64_be(percent_pos);
+            },
+            Command::Seek {percent_pos, dragged} => {
+                bytes.put_f64_be(percent_pos);
+                bytes.put_u8(dragged as u8);
+            },
+            _ => println!("Invalid command at send function"),
+        }
+
+        let mut header = vec![];
+        header.put_u16_be(bytes.len() as u16);
+        header.append(&mut bytes);
+
+        self.unbounded_sender.unbounded_send(Bytes::from(header))
     }
 
     async fn receive(&mut self) {
