@@ -16,7 +16,7 @@ pub struct Context(*mut c_void);
 unsafe impl Send for Context {}
 
 #[no_mangle]
-pub extern fn synchro_connection_connect(addr: *const c_char, port: u16) -> *mut SynchroConnection {
+pub extern fn synchro_connection_new(addr: *const c_char, port: u16, func: fn(Context, Command), ctx: Context) -> *mut SynchroConnection {
     let addr = unsafe {
         assert!(!addr.is_null());
         CStr::from_ptr(addr)
@@ -24,15 +24,28 @@ pub extern fn synchro_connection_connect(addr: *const c_char, port: u16) -> *mut
 
     let addr = addr.to_str().unwrap();
     let addr: SocketAddr = format!("{}:{}", addr, port).parse().unwrap();
-    let synchro_connection = SynchroConnection::connect(addr).unwrap();
+
+    let callback = move |cmd: Command| {
+        func(ctx, cmd);
+    };
+
+    let synchro_connection = SynchroConnection::new(addr, Box::new(callback)).unwrap();
     Box::into_raw(Box::new(synchro_connection))
+}
+
+#[no_mangle]
+pub extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
+    let mut connection = unsafe {
+        assert!(!ptr.is_null());
+        Box::from_raw(ptr)
+    };
 }
 
 #[no_mangle]
 pub extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
     let connection = unsafe {
         assert!(!ptr.is_null());
-        Box::from_raw(ptr)
+        &mut *ptr
     };
 
     connection.run();
@@ -46,18 +59,4 @@ pub extern fn synchro_connection_send(ptr: *mut SynchroConnection, cmd: Command)
     };
 
     connection.send(cmd).unwrap();
-}
-
-#[no_mangle]
-pub extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, func: fn(Context, Command), ctx: Context) {
-    let connection = unsafe {
-        assert!(!ptr.is_null());
-        &mut *ptr
-    };
-
-    let callback = move |cmd: Command| {
-        func(ctx, cmd);
-    };
-
-    connection.set_callback(Box::new(callback));
 }

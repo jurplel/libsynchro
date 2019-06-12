@@ -9,7 +9,7 @@ use futures::sync::mpsc;
 use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
 
 use tokio::net::TcpStream;
-use tokio::codec::{Framed, BytesCodec, Decoder};
+use tokio::codec::{BytesCodec, Decoder};
 use tokio::prelude::stream::*;
 use tokio::prelude::*;
 
@@ -34,21 +34,21 @@ impl Command {
 type CallbackClosure = Box<dyn Fn(Command) + Send>;
 
 pub struct SynchroConnection {
-    stream: SplitStream<Framed<TcpStream, BytesCodec>>,
     unbounded_sender: mpsc::UnboundedSender<Bytes>,
     send_job: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
-    callback: Option<CallbackClosure>,
+    receive_job: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
 }
 
 impl SynchroConnection {
-    pub fn connect(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(addr: SocketAddr, callback: CallbackClosure) -> Result<Self, Box<dyn std::error::Error>> {
         let socket = TcpStream::connect(&addr).wait()?;
 
         let framed = BytesCodec::new().framed(socket);
-        let (mut sink, stream) = framed.split();
+        let (mut sink, mut stream) = framed.split();
 
         let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded::<Bytes>();
 
+        // Define send job
         let send_job = async move {
             while let Some(data) = unbounded_receiver.next().await {
                 let data = data.unwrap();
@@ -58,25 +58,53 @@ impl SynchroConnection {
 
         let send_job = Box::pin(send_job);
 
-        let callback = None;
+        // Define receive job
+        let receive_job = async move {
+            let mut buffer = BytesMut::new();
+            let mut anticipated_message_length: u16 = 0;
+            while let Some(message) = stream.next().await {
+                // Add newly received information to the buffer
+                buffer.unsplit(message.unwrap());
+                
+                // Retrieve message length if we didn't already
+                if anticipated_message_length == 0 {
+                    if buffer.len() < 2 {
+                        continue;
+                    }
+                    
+                    anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
+
+                    println!("message length: {}", anticipated_message_length);
+                }
+
+                // Process the rest of the message if we're sure that we have the entire thing
+                if buffer.len() >= anticipated_message_length as usize {
+                    let split_bytes = buffer.split_to(anticipated_message_length as usize);
+                    let split_buf = Cursor::new(split_bytes.as_ref());
+
+                    (callback.as_ref())(handle_data(split_buf));
+
+                    anticipated_message_length = 0;
+                    buffer.clear();
+                }
+            }
+        };
+
+        let receive_job = Box::pin(receive_job);
 
         Ok(SynchroConnection {
-            stream,
             unbounded_sender,
             send_job: Some(send_job),
-            callback,
+            receive_job: Some(receive_job),
         })
     }
 
-    pub fn set_callback(&mut self, func: CallbackClosure) {
-        self.callback = Some(func);
-    }
-
-    pub fn run(mut self) {
+    pub fn run(&mut self) {
         let send_job = self.send_job.take().unwrap();
+        let receive_job = self.receive_job.take().unwrap();
         tokio::run_async(async move {
             tokio::spawn_async(send_job);
-            self.receive().await;
+            receive_job.await;
         });
     }
 
@@ -102,37 +130,6 @@ impl SynchroConnection {
         header.append(&mut bytes);
 
         self.unbounded_sender.unbounded_send(Bytes::from(header))
-    }
-
-    async fn receive(&mut self) {
-        let mut buffer = BytesMut::new();
-        let mut anticipated_message_length: u16 = 0;
-        while let Some(message) = self.stream.next().await {
-            // Add newly received information to the buffer
-            buffer.unsplit(message.unwrap());
-            
-            // Retrieve message length if we didn't already
-            if anticipated_message_length == 0 {
-                if buffer.len() < 2 {
-                    continue;
-                }
-                
-                anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
-
-                println!("message length: {}", anticipated_message_length);
-            }
-
-            // Process the rest of the message if we're sure that we have the entire thing
-            if buffer.len() >= anticipated_message_length as usize {
-                let split_bytes = buffer.split_to(anticipated_message_length as usize);
-                let split_buf = Cursor::new(split_bytes.as_ref());
-
-                (self.callback.as_ref().unwrap())(handle_data(split_buf));
-
-                anticipated_message_length = 0;
-                buffer.clear();
-            }
-        }
     }
 }
 
