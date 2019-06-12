@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::io::Cursor;
 
 use futures::sync::mpsc;
 
@@ -93,7 +94,7 @@ impl SynchroConnection {
                 bytes.put_f64_be(percent_pos);
                 bytes.put_u8(dragged as u8);
             },
-            _ => println!("Invalid command at send function"),
+            _ => println!("Sending invalid command"),
         }
 
         let mut header = vec![];
@@ -124,40 +125,42 @@ impl SynchroConnection {
             // Process the rest of the message if we're sure that we have the entire thing
             if buffer.len() >= anticipated_message_length as usize {
                 let split_bytes = buffer.split_to(anticipated_message_length as usize);
-                let split_ref = split_bytes.as_ref();
-                let split_buffer = std::io::Cursor::new(split_ref);
+                let split_buf = Cursor::new(split_bytes.as_ref());
+
+                (self.callback.as_ref().unwrap())(handle_data(split_buf));
 
                 anticipated_message_length = 0;
-                buffer.clear(); // remember to remove this
-                
-                (self.callback.as_ref().unwrap())(Command::Invalid);
+                buffer.clear();
             }
         }
     }
 }
 
-// fn handle_data(mut data: std::io::Cursor<&[u8]>) {
-//     let has_arguments = data.get_u8() != 0;
-//     println!("{}", has_arguments);
+fn handle_data(mut data: impl Buf) -> Command {
+    let numeric_command = data.get_u8();
+    let command = match numeric_command {
+        1 => {
+            let paused = data.get_u8() != 0;
+            let percent_pos = data.get_f64_be();
+            Command::Pause {paused, percent_pos}
+        },
+        2 => {
+            let percent_pos = data.get_f64_be();
+            let dragged = data.get_u8() != 0;
+            Command::Seek {percent_pos, dragged}
+        },
+        _ => { 
+            println!("Recieved invalid command");
+            Command::Invalid
+        },
+    };
 
-//     let numeric_command = data.get_u8();
-//     let command = Command::from(numeric_command);
-    
+    if data.has_remaining() {
+        println!("Warning: all data not used from recieved {:?}", command)
+    };
 
-//     match command {
-//         Command::Invalid => {
-//             println!("Invalid commnad received");
-//         }
-//         Command::Pause => {
-//             let paused = data.get_u8() != 0;
-//             let percent_pos = data.get_f64_be();
-//         }
-//         Command::Seek => {
-//             let percent_pos = data.get_f64_be();
-//             let dragged = data.get_u8() != 0;
-//         }
-//     }
-// }
+    command
+}
 
 #[cfg(test)]
 mod tests {
