@@ -1,5 +1,6 @@
 // This is a helper to allow shutting down the stream from only the write half.
-// It is made by dremon - https://github.com/tokio-rs/tokio/issues/852#issuecomment-459766144
+// It was originally made by dremon on Github
+// https://github.com/tokio-rs/tokio/issues/852#issuecomment-459766144
 
 use std::net::Shutdown;
 
