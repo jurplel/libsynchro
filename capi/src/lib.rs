@@ -39,6 +39,7 @@ pub extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
         assert!(!ptr.is_null());
         Box::from_raw(ptr)
     };
+    connection.destroy().unwrap();
 }
 
 #[no_mangle]

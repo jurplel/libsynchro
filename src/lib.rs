@@ -1,5 +1,8 @@
 #![feature(async_await)]
 
+mod wrappedtcpstream;
+use wrappedtcpstream::WrappedTcpStream;
+
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::io::Cursor;
@@ -9,8 +12,7 @@ use futures::sync::mpsc;
 use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
 
 use tokio::net::TcpStream;
-use tokio::codec::{BytesCodec, Decoder};
-use tokio::prelude::stream::*;
+use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
 use tokio::prelude::*;
 
 #[repr(C)]
@@ -42,9 +44,12 @@ pub struct SynchroConnection {
 impl SynchroConnection {
     pub fn new(addr: SocketAddr, callback: CallbackClosure) -> Result<Self, Box<dyn std::error::Error>> {
         let socket = TcpStream::connect(&addr).wait()?;
+        let wrapped = WrappedTcpStream(socket);
 
-        let framed = BytesCodec::new().framed(socket);
-        let (mut sink, mut stream) = framed.split();
+        let (read_half, write_half) = wrapped.split();
+
+        let mut stream = FramedRead::new(read_half, BytesCodec::new());
+        let mut sink = FramedWrite::new(write_half, BytesCodec::new());
 
         let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded::<Bytes>();
 
@@ -52,8 +57,11 @@ impl SynchroConnection {
         let send_job = async move {
             while let Some(data) = unbounded_receiver.next().await {
                 let data = data.unwrap();
+                // An empty bytes object is treated as a disconnect signal
+                if data.len() == 0 { break; }
                 sink.send_async(data).await.unwrap();
             }
+            sink.get_mut().shutdown().unwrap();
         };
 
         let send_job = Box::pin(send_job);
@@ -130,6 +138,10 @@ impl SynchroConnection {
         header.append(&mut bytes);
 
         self.unbounded_sender.unbounded_send(Bytes::from(header))
+    }
+
+    pub fn destroy(&mut self) -> Result<(), mpsc::SendError<Bytes>> {
+        self.unbounded_sender.unbounded_send(Bytes::new())
     }
 }
 
