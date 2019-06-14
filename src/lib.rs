@@ -5,7 +5,6 @@ use wrappedtcpstream::WrappedTcpStream;
 
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::io::Cursor;
 
 use futures::sync::mpsc;
 
@@ -30,6 +29,52 @@ impl Command {
             Command::Seek {percent_pos: _, dragged: _} => 2,
             _ => 0,
         }
+    }
+
+    pub fn into_bytes(self) -> Bytes {
+        let mut body = vec![];
+
+        body.put_u8(self.to_u8());
+
+        match self {
+            Command::Pause {paused, percent_pos} => { 
+                body.put_u8(paused as u8);
+                body.put_f64_be(percent_pos);
+            },
+            Command::Seek {percent_pos, dragged} => {
+                body.put_f64_be(percent_pos);
+                body.put_u8(dragged as u8);
+            },
+            _ => {},
+        }
+
+        let mut message = vec![];
+        message.put_u16_be(body.len() as u16);
+        message.append(&mut body);
+        Bytes::from(message)
+    }
+
+    pub fn from_buf(mut data: impl Buf) -> Self {
+        let numeric_command = data.get_u8();
+        let command = match numeric_command {
+            1 => {
+                let paused = data.get_u8() != 0;
+                let percent_pos = data.get_f64_be();
+                Command::Pause {paused, percent_pos}
+            },
+            2 => {
+                let percent_pos = data.get_f64_be();
+                let dragged = data.get_u8() != 0;
+                Command::Seek {percent_pos, dragged}
+            },
+            _ => Command::Invalid,
+        };
+
+        if data.has_remaining() {
+            println!("Warning: all data not used from recieved {:?}", command)
+        };
+
+    command
     }
 }
 
@@ -88,9 +133,9 @@ impl SynchroConnection {
                 // Process the rest of the message if we're sure that we have the entire thing
                 if buffer.len() >= anticipated_message_length as usize {
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
-                    let split_buf = Cursor::new(split_bytes.as_ref());
 
-                    (callback.as_ref())(handle_data(split_buf));
+                    // Call user-provided callback to handle received commands
+                    (callback.as_ref())(Command::from_buf(split_bytes.into_buf()));
 
                     anticipated_message_length = 0;
                     buffer.clear();
@@ -117,58 +162,12 @@ impl SynchroConnection {
     }
 
     pub fn send(&mut self, command: Command) -> Result<(), mpsc::SendError<Bytes>> {
-        let mut bytes = vec![];
-
-        bytes.put_u8(command.to_u8());
-
-        match command {
-            Command::Pause {paused, percent_pos} => { 
-                bytes.put_u8(paused as u8);
-                bytes.put_f64_be(percent_pos);
-            },
-            Command::Seek {percent_pos, dragged} => {
-                bytes.put_f64_be(percent_pos);
-                bytes.put_u8(dragged as u8);
-            },
-            _ => println!("Sending invalid command"),
-        }
-
-        let mut header = vec![];
-        header.put_u16_be(bytes.len() as u16);
-        header.append(&mut bytes);
-
-        self.unbounded_sender.unbounded_send(Bytes::from(header))
+        self.unbounded_sender.unbounded_send(command.into_bytes())
     }
 
     pub fn destroy(&mut self) -> Result<(), mpsc::SendError<Bytes>> {
         self.unbounded_sender.unbounded_send(Bytes::new())
     }
-}
-
-fn handle_data(mut data: impl Buf) -> Command {
-    let numeric_command = data.get_u8();
-    let command = match numeric_command {
-        1 => {
-            let paused = data.get_u8() != 0;
-            let percent_pos = data.get_f64_be();
-            Command::Pause {paused, percent_pos}
-        },
-        2 => {
-            let percent_pos = data.get_f64_be();
-            let dragged = data.get_u8() != 0;
-            Command::Seek {percent_pos, dragged}
-        },
-        _ => { 
-            println!("Recieved invalid command");
-            Command::Invalid
-        },
-    };
-
-    if data.has_remaining() {
-        println!("Warning: all data not used from recieved {:?}", command)
-    };
-
-    command
 }
 
 #[cfg(test)]
