@@ -1,22 +1,20 @@
 #![feature(async_await)]
 
+use libsynchro::*;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 
 use futures::sync::mpsc;
 
-use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
-
 use tokio::net::{TcpListener, TcpStream};
-use tokio::codec::{Framed, BytesCodec, Decoder};
-use tokio::prelude::stream::*;
 use tokio::prelude::*;
 
-type ClientListArc = Arc<Mutex<HashMap<SocketAddr, mpsc::UnboundedSender<Bytes>>>>;
+type ClientListArc = Arc<Mutex<HashMap<SocketAddr, mpsc::UnboundedSender<Command>>>>;
 
 struct Client {
-    stream: SplitStream<Framed<TcpStream, BytesCodec>>,
+    synchro_conn: Arc<Mutex<SynchroConnection>>,
     addr: SocketAddr,
     client_list: ClientListArc,
 }
@@ -26,65 +24,41 @@ impl Client {
         let addr = socket.peer_addr().unwrap();
         println!("Client connected: {}", addr);
 
-        let framed = BytesCodec::new().framed(socket);
-        let (mut sink, stream) = framed.split();
-
         let (sender, mut reciever) = mpsc::unbounded();
         client_list.lock().unwrap().insert(addr, sender);
 
-        // When data is sent to this Client object through the
-        // mpsc system, send it to the actual client
+        let callback_client_list = client_list.clone();
+        let callback = move |cmd| {
+            let mut clients = callback_client_list.lock().unwrap();
+            for (peer_addr, sender) in clients.iter_mut() {
+                if *peer_addr != addr {
+                    sender.unbounded_send(cmd).unwrap();
+                }
+            }
+        };
+
+        let synchro_conn = Arc::new(Mutex::new(SynchroConnection::from_existing(socket, Box::new(callback))));
+
+        let synchro_conn2 = synchro_conn.clone();
+
         tokio::spawn_async(async move { 
-            while let Some(data) = reciever.next().await {
-                let data = data.unwrap();
-                println!("{:?}", data);
-                sink.send_async(data).await.unwrap();
+            while let Some(cmd) = reciever.next().await {
+                let cmd = cmd.unwrap();
+                synchro_conn2.lock().unwrap().send(cmd).unwrap();
             }
         });
 
         Client {
-            stream,
+            synchro_conn,
             addr,
             client_list,
         }
     }
 
-    async fn recieve(&mut self) { 
-        let mut buffer = BytesMut::new();
-        let mut anticipated_message_length: u16 = 0;
-        while let Some(message) = self.stream.next().await {
-            // Add newly received information to the buffer
-            buffer.unsplit(message.unwrap());
-            
-            // Retrieve message length if we did'nt already
-            if anticipated_message_length == 0 {
-                if buffer.len() < 2 {
-                    continue;
-                }
-                
-                anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
-
-                println!("message length: {}", anticipated_message_length);
-            }
-
-            // Process the rest of the message if we're sure that we have the entire thing
-            if buffer.len() >= anticipated_message_length as usize {
-                let split_bytes = buffer.split_to(anticipated_message_length as usize);
-                let mut header_bytes = BytesMut::with_capacity(2);
-                header_bytes.put_u16_be(anticipated_message_length);
-                header_bytes.unsplit(split_bytes.clone());
-
-                let mut clients = self.client_list.lock().unwrap();
-                for (peer_addr, sender) in clients.iter_mut() {
-                    if *peer_addr != self.addr {
-                        sender.unbounded_send(Bytes::from(header_bytes.clone())).unwrap();
-                    }
-                }
-
-                anticipated_message_length = 0;
-                buffer.clear(); // remember to remove this
-            }
-        }
+    fn spawn_jobs(&mut self) {
+        let (send_job, receive_job) = self.synchro_conn.lock().unwrap().take_jobs();
+        tokio::spawn_async(send_job);
+        tokio::spawn_async(receive_job);
     }
 }
 
@@ -109,9 +83,7 @@ fn main() {
 
             let mut client = Client::new(stream, client_list.clone());
 
-            tokio::spawn_async(async move { 
-                client.recieve().await; 
-            });
+            client.spawn_jobs();
         }
     });
 }

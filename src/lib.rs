@@ -78,17 +78,22 @@ impl Command {
     }
 }
 
-type CallbackClosure = Box<dyn Fn(Command) + Send>;
+type CallbackFn = Box<dyn Fn(Command) + Send>;
+type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub struct SynchroConnection {
     unbounded_sender: mpsc::UnboundedSender<Bytes>,
-    send_job: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
-    receive_job: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    send_job: Option<AsyncJob>,
+    receive_job: Option<AsyncJob>,
 }
 
 impl SynchroConnection {
-    pub fn new(addr: SocketAddr, callback: CallbackClosure) -> Result<Self, Box<dyn std::error::Error>> {
-        let socket = TcpStream::connect(&addr).wait()?;
+    pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
+        let connection = TcpStream::connect(&addr).wait()?;
+        Ok(SynchroConnection::from_existing(connection, callback))
+    }
+
+    pub fn from_existing(socket: TcpStream, callback: CallbackFn) -> Self {
         let wrapped = WrappedTcpStream(socket);
 
         let (read_half, write_half) = wrapped.split();
@@ -145,23 +150,28 @@ impl SynchroConnection {
 
         let receive_job = Box::pin(receive_job);
 
-        Ok(SynchroConnection {
+        SynchroConnection {
             unbounded_sender,
             send_job: Some(send_job),
             receive_job: Some(receive_job),
-        })
+        }
     }
 
     pub fn run(&mut self) {
-        let send_job = self.send_job.take().unwrap();
-        let receive_job = self.receive_job.take().unwrap();
+        let (send_job, receive_job) = self.take_jobs();
         tokio::run_async(async move {
             tokio::spawn_async(send_job);
             receive_job.await;
         });
     }
 
-    pub fn send(&mut self, command: Command) -> Result<(), mpsc::SendError<Bytes>> {
+    pub fn take_jobs(&mut self) -> (AsyncJob, AsyncJob) {
+        let send_job = self.send_job.take().unwrap();
+        let receive_job = self.receive_job.take().unwrap();
+        (send_job, receive_job)
+    }
+
+    pub fn send(&self, command: Command) -> Result<(), mpsc::SendError<Bytes>> {
         self.unbounded_sender.unbounded_send(command.into_bytes())
     }
 
