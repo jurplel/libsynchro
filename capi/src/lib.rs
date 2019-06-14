@@ -29,8 +29,14 @@ pub extern fn synchro_connection_new(addr: *const c_char, port: u16, func: fn(Co
         func(ctx, cmd);
     };
 
-    let synchro_connection = SynchroConnection::new(addr, Box::new(callback)).unwrap();
-    Box::into_raw(Box::new(synchro_connection))
+    let result = SynchroConnection::new(addr, Box::new(callback));
+    match result {
+        Ok(connection) => Box::into_raw(Box::new(connection)),
+        Err(error) => {
+            println!("Error: {}", error);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]
