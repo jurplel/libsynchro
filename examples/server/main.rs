@@ -1,6 +1,4 @@
-#![feature(await_macro, async_await)]
-
-use libsynchro;
+#![feature(async_await)]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -37,10 +35,10 @@ impl Client {
         // When data is sent to this Client object through the
         // mpsc system, send it to the actual client
         tokio::spawn_async(async move { 
-            while let Some(data) = await!(reciever.next()) {
+            while let Some(data) = reciever.next().await {
                 let data = data.unwrap();
                 println!("{:?}", data);
-                await!(sink.send_async(data)).unwrap();
+                sink.send_async(data).await.unwrap();
             }
         });
 
@@ -54,7 +52,7 @@ impl Client {
     async fn recieve(&mut self) { 
         let mut buffer = BytesMut::new();
         let mut anticipated_message_length: u16 = 0;
-        while let Some(message) = await!(self.stream.next()) {
+        while let Some(message) = self.stream.next().await {
             // Add newly received information to the buffer
             buffer.unsplit(message.unwrap());
             
@@ -106,19 +104,19 @@ fn main() {
     tokio::run_async(async move {
         let mut incoming = listener.incoming();
 
-        while let Some(stream) = await!(incoming.next()) {
+        while let Some(stream) = incoming.next().await {
             let stream = stream.unwrap();
 
             let mut client = Client::new(stream, client_list.clone());
 
             tokio::spawn_async(async move { 
-                await!(client.recieve()); 
+                client.recieve().await; 
             });
         }
     });
 }
 
-fn start_server(port: u16) -> Result<TcpListener, Box<std::error::Error>> {
+fn start_server(port: u16) -> Result<TcpListener, Box<dyn std::error::Error>> {
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?; // to-do: add ipv6
     let listener = TcpListener::bind(&addr)?;
     Ok(listener)
