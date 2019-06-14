@@ -78,8 +78,8 @@ impl Command {
     }
 }
 
-type CallbackFn = Box<dyn Fn(Command) + Send>;
-type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+pub type CallbackFn = Box<dyn Fn(Command) + Send>;
+pub type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub struct SynchroConnection {
     unbounded_sender: mpsc::UnboundedSender<Bytes>,

@@ -55,10 +55,8 @@ impl Client {
         }
     }
 
-    fn spawn_jobs(&mut self) {
-        let (send_job, receive_job) = self.synchro_conn.lock().unwrap().take_jobs();
-        tokio::spawn_async(send_job);
-        tokio::spawn_async(receive_job);
+    fn take_jobs(&mut self) -> (AsyncJob, AsyncJob) {
+        self.synchro_conn.lock().unwrap().take_jobs()
     }
 }
 
@@ -83,7 +81,11 @@ fn main() {
 
             let mut client = Client::new(stream, client_list.clone());
 
-            client.spawn_jobs();
+            tokio::spawn_async(async move { 
+                let (send_job, receive_job) = client.take_jobs();
+                tokio::spawn_async(send_job);
+                receive_job.await;
+            });
         }
     });
 }
