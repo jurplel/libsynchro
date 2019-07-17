@@ -124,26 +124,29 @@ impl SynchroConnection {
                 // Add newly received information to the buffer
                 buffer.unsplit(message.unwrap());
                 
-                // Retrieve message length if we didn't already
-                if anticipated_message_length == 0 {
-                    if buffer.len() < 2 {
-                        continue;
+                loop {
+                    // Retrieve message length if we didn't already
+                    if anticipated_message_length == 0 {
+                        if buffer.len() < 2 {
+                            break;
+                        }
+                        
+                        anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
+
+                        println!("message length: {}", anticipated_message_length);
                     }
-                    
-                    anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
 
-                    println!("message length: {}", anticipated_message_length);
-                }
+                    // Process the rest of the message if we're sure that we have the entire thing
+                    if buffer.len() < anticipated_message_length as usize {
+                        break;
+                    }
 
-                // Process the rest of the message if we're sure that we have the entire thing
-                if buffer.len() >= anticipated_message_length as usize {
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
 
                     // Call user-provided callback to handle received commands
                     (callback.as_ref())(Command::from_buf(split_bytes.into_buf()));
 
                     anticipated_message_length = 0;
-                    buffer.clear();
                 }
             }
         };
