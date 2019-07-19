@@ -15,11 +15,12 @@ use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
 use tokio::prelude::*;
 
 #[repr(C)]
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Command {
     Invalid,
     Pause {paused: bool, percent_pos: f64},
     Seek {percent_pos: f64, dragged: bool},
+    UpdateClientList {client_list: String},
 }
 
 impl Command {
@@ -27,6 +28,7 @@ impl Command {
         match self {
             Command::Pause {paused: _, percent_pos: _} => 1,
             Command::Seek {percent_pos: _, dragged: _} => 2,
+            Command::UpdateClientList {client_list: _} => 3,
             _ => 0,
         }
     }
@@ -45,6 +47,9 @@ impl Command {
                 body.put_f64_be(percent_pos);
                 body.put_u8(dragged as u8);
             },
+            Command::UpdateClientList {client_list} => {
+                body.put(client_list.into_bytes());
+            }
             _ => {},
         }
 
@@ -56,6 +61,7 @@ impl Command {
 
     pub fn from_buf(mut data: impl Buf) -> Self {
         let numeric_command = data.get_u8();
+
         let command = match numeric_command {
             1 => {
                 let paused = data.get_u8() != 0;
@@ -67,11 +73,16 @@ impl Command {
                 let dragged = data.get_u8() != 0;
                 Command::Seek {percent_pos, dragged}
             },
+            3 => {
+                let client_list = String::from_utf8(data.bytes().to_vec()).unwrap();
+                data.advance(client_list.len());
+                Command::UpdateClientList {client_list}
+            }
             _ => Command::Invalid,
         };
 
         if data.has_remaining() {
-            println!("Warning: all data not used from recieved {:?}", command)
+            println!("Warning: {} bytes not used from recieved {:?}", data.remaining(), command)
         };
 
     command
@@ -140,7 +151,7 @@ impl SynchroConnection {
                     if buffer.len() < anticipated_message_length as usize {
                         break;
                     }
-
+                    
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
 
                     // Call user-provided callback to handle received commands
