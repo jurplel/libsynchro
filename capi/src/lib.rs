@@ -16,7 +16,7 @@ pub enum Synchro_Command {
     Invalid,
     Pause {paused: bool, percent_pos: f64},
     Seek {percent_pos: f64, dragged: bool},
-    Update_Client_List {client_list: *mut c_char},
+    UpdateClientList {client_list: *mut c_char},
 }
 
 impl Synchro_Command {
@@ -27,7 +27,7 @@ impl Synchro_Command {
             Command::Seek {percent_pos, dragged} => Synchro_Command::Seek {percent_pos, dragged},
             Command::UpdateClientList {client_list} => {
                 let client_list = CString::new(client_list).unwrap().into_raw();
-                Synchro_Command::Update_Client_List {client_list}
+                Synchro_Command::UpdateClientList {client_list}
             },
         } 
     }
@@ -37,7 +37,7 @@ impl Synchro_Command {
             Synchro_Command::Invalid => Command::Invalid,
             Synchro_Command::Pause {paused, percent_pos} => Command::Pause {paused, percent_pos},
             Synchro_Command::Seek {percent_pos, dragged} => Command::Seek {percent_pos, dragged},
-            Synchro_Command::Update_Client_List {client_list} => { 
+            Synchro_Command::UpdateClientList {client_list} => { 
                 Command::UpdateClientList {
                     client_list: unsafe {
                         assert!(!client_list.is_null()); 
