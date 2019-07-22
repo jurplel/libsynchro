@@ -17,6 +17,7 @@ pub enum Synchro_Command {
     Pause {paused: bool, percent_pos: f64},
     Seek {percent_pos: f64, dragged: bool},
     UpdateClientList {client_list: *mut c_char},
+    SetName {desired_name: *mut c_char},
 }
 
 impl Synchro_Command {
@@ -28,6 +29,10 @@ impl Synchro_Command {
             Command::UpdateClientList {client_list} => {
                 let client_list = CString::new(client_list).unwrap().into_raw();
                 Synchro_Command::UpdateClientList {client_list}
+            },
+            Command::SetName {desired_name} => {
+                let desired_name = CString::new(desired_name).unwrap().into_raw();
+                Synchro_Command::SetName {desired_name}
             },
         } 
     }
@@ -42,6 +47,14 @@ impl Synchro_Command {
                     client_list: unsafe {
                         assert!(!client_list.is_null()); 
                         CStr::from_ptr(client_list).to_str().unwrap().to_string()
+                    }
+                }
+            },
+            Synchro_Command::SetName {desired_name} => { 
+                Command::SetName {
+                    desired_name: unsafe {
+                        assert!(!desired_name.is_null()); 
+                        CStr::from_ptr(desired_name).to_str().unwrap().to_string()
                     }
                 }
             },

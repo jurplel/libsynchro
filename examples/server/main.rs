@@ -3,7 +3,7 @@
 use libsynchro::*;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 
 use futures::sync::mpsc::{self, UnboundedSender};
@@ -12,15 +12,17 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
 type ClientHashmapArc = Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Command>>>>;
+type ClientNamesHashmapArc = Arc<Mutex<HashMap<SocketAddr, String>>>;
 
 struct Client {
     synchro_conn: Arc<Mutex<SynchroConnection>>,
     addr: SocketAddr,
     client_hashmap: ClientHashmapArc,
+    client_names_hashmap: ClientNamesHashmapArc
 }
 
 impl Client {
-    fn new(socket: TcpStream, client_hashmap: ClientHashmapArc) -> Self {
+    fn new(socket: TcpStream, client_hashmap: ClientHashmapArc, client_names_hashmap: ClientNamesHashmapArc) -> Self {
         let addr = socket.peer_addr().unwrap();
         println!("Client connected: {}", addr);
 
@@ -28,20 +30,24 @@ impl Client {
         client_hashmap.lock().unwrap().insert(addr, sender);
 
         let callback_client_hashmap = client_hashmap.clone();
+        let callback_client_names_hashmap = client_names_hashmap.clone();
         let callback = move |cmd: Command| {
-            let clients = callback_client_hashmap.lock().unwrap();
-            
+
             // Determine which clients to forward command to
             match cmd {
                 Command::UpdateClientList {client_list: _} => {
 
-                    let new_cmd = Command::UpdateClientList {client_list: get_list_of_clients(&clients)};
+                    let new_cmd = Command::UpdateClientList {client_list: get_list_of_clients(&callback_client_hashmap, &callback_client_names_hashmap)};
 
-                    clients.get(&addr).unwrap().unbounded_send(new_cmd.clone()).unwrap();
-
+                    callback_client_hashmap.lock().unwrap().get(&addr).unwrap().unbounded_send(new_cmd).unwrap();
+                },
+                Command::SetName {desired_name} => {
+                    println!("{}", desired_name);
+                    callback_client_names_hashmap.lock().unwrap().insert(addr, desired_name);
+                    send_client_list_to_all(&callback_client_hashmap, &callback_client_names_hashmap);
                 },
                 _ => {
-                    for (peer_addr, sender) in clients.iter() {
+                    for (peer_addr, sender) in callback_client_hashmap.lock().unwrap().iter() {
                         if *peer_addr != addr {
                             sender.unbounded_send(cmd.clone()).unwrap();
                         }
@@ -65,6 +71,7 @@ impl Client {
             synchro_conn,
             addr,
             client_hashmap,
+            client_names_hashmap,
         }
     }
 
@@ -76,9 +83,8 @@ impl Client {
 impl Drop for Client {
     fn drop(&mut self) {
         println!("Dropped client {}", self.addr);
-        let mut clients = self.client_hashmap.lock().unwrap();
-        clients.remove(&self.addr);
-        send_client_list_to_all(&clients);
+        self.client_hashmap.lock().unwrap().remove(&self.addr);
+        send_client_list_to_all(&self.client_hashmap, &self.client_names_hashmap);
     }
 }
 
@@ -87,6 +93,7 @@ fn main() {
     println!("Server started sucessfully on {}", listener.local_addr().unwrap());
 
     let client_hashmap: ClientHashmapArc = Arc::new(Mutex::new(HashMap::new()));
+    let client_names_hashmap: ClientNamesHashmapArc = Arc::new(Mutex::new(HashMap::new()));
 
     tokio::run_async(async move {
         let mut incoming = listener.incoming();
@@ -94,14 +101,14 @@ fn main() {
         while let Some(stream) = incoming.next().await {
             let stream = stream.unwrap();
 
-            let mut client = Client::new(stream, client_hashmap.clone());
+            let mut client = Client::new(stream, client_hashmap.clone(), client_names_hashmap.clone());
             tokio::spawn_async(async move { 
                 let (send_job, receive_job) = client.take_jobs();
                 tokio::spawn_async(send_job);
                 receive_job.await;
             });
 
-            send_client_list_to_all(&client_hashmap.lock().unwrap());
+            send_client_list_to_all(&client_hashmap, &client_names_hashmap);
         }
     });
 }
@@ -112,21 +119,30 @@ fn start_server(port: u16) -> Result<TcpListener, Box<dyn std::error::Error>> {
     Ok(listener)
 }
 
-fn get_list_of_clients(client_hashmap: &MutexGuard<'_, HashMap<SocketAddr, UnboundedSender<Command>>>) -> String {
+fn get_list_of_clients(client_hashmap: &ClientHashmapArc, client_names_hashmap: &ClientNamesHashmapArc) -> String {
+    let clients = client_hashmap.lock().unwrap();
+    let names = client_names_hashmap.lock().unwrap();
 
     let mut client_list = String::new();
-    for key in client_hashmap.keys() {
+    for key in clients.keys() {
         if !client_list.is_empty() {
             client_list.push_str(",");
         }
-        client_list.push_str(&key.to_string());
+
+        let mut name_or_key = &key.to_string();
+        if let Some(name) = names.get(key) {
+            name_or_key = name;
+        }
+        client_list.push_str(name_or_key);
     }
 
     client_list
 }
 
-fn send_client_list_to_all(client_hashmap: &MutexGuard<'_, HashMap<SocketAddr, UnboundedSender<Command>>>) {
-    for sender in client_hashmap.values() {
-        sender.unbounded_send(Command::UpdateClientList {client_list: get_list_of_clients(&client_hashmap)}).unwrap();
+fn send_client_list_to_all(client_hashmap: &ClientHashmapArc, client_names_hashmap: &ClientNamesHashmapArc) {
+    let retrieved_list = get_list_of_clients(client_hashmap, client_names_hashmap);
+    let clients = client_hashmap.lock().unwrap();
+    for sender in clients.values() {
+        sender.unbounded_send(Command::UpdateClientList { client_list: retrieved_list.clone() } ).unwrap();
     }
 }

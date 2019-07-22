@@ -21,6 +21,7 @@ pub enum Command {
     Pause {paused: bool, percent_pos: f64},
     Seek {percent_pos: f64, dragged: bool},
     UpdateClientList {client_list: String},
+    SetName {desired_name: String},
 }
 
 impl Command {
@@ -29,6 +30,7 @@ impl Command {
             Command::Pause {paused: _, percent_pos: _} => 1,
             Command::Seek {percent_pos: _, dragged: _} => 2,
             Command::UpdateClientList {client_list: _} => 3,
+            Command::SetName {desired_name: _} => 4,
             _ => 0,
         }
     }
@@ -49,7 +51,10 @@ impl Command {
             },
             Command::UpdateClientList {client_list} => {
                 body.put(client_list.into_bytes());
-            }
+            },
+            Command::SetName {desired_name} => {
+                body.put(desired_name.into_bytes());
+            },
             _ => {},
         }
 
@@ -77,7 +82,12 @@ impl Command {
                 let client_list = String::from_utf8(data.bytes().to_vec()).unwrap();
                 data.advance(client_list.len());
                 Command::UpdateClientList {client_list}
-            }
+            },
+            4 => {
+                let desired_name = String::from_utf8(data.bytes().to_vec()).unwrap();
+                data.advance(desired_name.len());
+                Command::SetName {desired_name}
+            },
             _ => Command::Invalid,
         };
 
