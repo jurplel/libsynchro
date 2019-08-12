@@ -126,7 +126,7 @@ impl SynchroConnection {
             while let Some(data) = unbounded_receiver.next().await {
                 // An empty bytes object is treated as a disconnect signal
                 if data.len() == 0 { break; }
-                sink.send(data);
+                sink.send(data).await.unwrap();
             }
             sink.get_mut().shutdown();
         };
