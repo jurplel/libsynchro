@@ -98,21 +98,21 @@ pub unsafe extern "C" fn synchro_connection_new(
     assert!(!addr.is_null());
     let addr = CStr::from_ptr(addr);
 
-    let addr = addr.to_str().unwrap();
-    let addr: SocketAddr = format!("{}:{}", addr, port).parse().unwrap();
+    let result = || -> Result<*mut SynchroConnection, Box<dyn std::error::Error>> {
+        let addr = addr.to_str()?;
+        let addr: SocketAddr = format!("{}:{}", addr, port).parse()?;
 
-    let callback = move |cmd: Command| {
-        func(ctx, Synchro_Command::from_command(cmd));
-    };
+        let callback = move |cmd: Command| {
+            func(ctx, Synchro_Command::from_command(cmd));
+        };
 
-    let result = SynchroConnection::new(addr, Box::new(callback));
-    match result {
-        Ok(connection) => Box::into_raw(Box::new(connection)),
-        Err(error) => {
-            println!("Error: {}", error);
-            std::ptr::null_mut()
-        }
-    }
+        let conn = SynchroConnection::new(addr, Box::new(callback))?;
+        Ok(Box::into_raw(Box::new(conn)))
+    }();
+    result.unwrap_or_else(|error|{
+        println!("Error: {}", error);
+        std::ptr::null_mut()
+    })
 }
 
 #[no_mangle]
