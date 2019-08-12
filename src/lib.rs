@@ -1,15 +1,12 @@
 #![feature(async_await)]
 
-mod wrappedtcpstream;
-use wrappedtcpstream::WrappedTcpStream;
-
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use futures::sync::mpsc;
-
 use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
 
+use tokio::sync::mpsc;
+use tokio::runtime::Runtime;
 use tokio::net::TcpStream;
 use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
 use tokio::prelude::*;
@@ -110,29 +107,28 @@ pub struct SynchroConnection {
 
 impl SynchroConnection {
     pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
-        let connection = TcpStream::connect(&addr).wait()?;
+    let runtime = Runtime::new().unwrap();
+    let connection = runtime.block_on(TcpStream::connect(&addr))?;
         Ok(SynchroConnection::from_existing(connection, callback))
     }
 
     pub fn from_existing(socket: TcpStream, callback: CallbackFn) -> Self {
-        let wrapped = WrappedTcpStream(socket);
 
-        let (read_half, write_half) = wrapped.split();
+        let (read_half, write_half) = socket.split();
 
         let mut stream = FramedRead::new(read_half, BytesCodec::new());
         let mut sink = FramedWrite::new(write_half, BytesCodec::new());
 
-        let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded::<Bytes>();
+        let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded_channel::<Bytes>();
 
         // Define send job
         let send_job = async move {
             while let Some(data) = unbounded_receiver.next().await {
-                let data = data.unwrap();
                 // An empty bytes object is treated as a disconnect signal
                 if data.len() == 0 { break; }
-                sink.send_async(data).await.unwrap();
+                sink.send(data).await.unwrap();
             }
-            sink.get_mut().shutdown().unwrap();
+            sink.get_mut().shutdown();
         };
 
         let send_job = Box::pin(send_job);
@@ -183,8 +179,9 @@ impl SynchroConnection {
 
     pub fn run(&mut self) {
         let (send_job, receive_job) = self.take_jobs();
-        tokio::run_async(async move {
-            tokio::spawn_async(send_job);
+        let runtime = Runtime::new().unwrap();
+        runtime.block_on(async move {
+            tokio::spawn(send_job);
             receive_job.await;
         });
     }
@@ -195,12 +192,12 @@ impl SynchroConnection {
         (send_job, receive_job)
     }
 
-    pub fn send(&self, command: Command) -> Result<(), mpsc::SendError<Bytes>> {
-        self.unbounded_sender.unbounded_send(command.into_bytes())
+    pub fn send(&mut self, command: Command) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
+        self.unbounded_sender.try_send(command.into_bytes())
     }
 
-    pub fn destroy(&mut self) -> Result<(), mpsc::SendError<Bytes>> {
-        self.unbounded_sender.unbounded_send(Bytes::new())
+    pub fn destroy(&mut self) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
+        self.unbounded_sender.try_send(Bytes::new())
     }
 }
 
