@@ -34,7 +34,7 @@ impl Client {
 
             // Determine which clients to forward command to
             match cmd {
-                Command::UpdateClientList {client_list: _} => {
+                Command::UpdateClientList {..} => {
 
                     let new_cmd = Command::UpdateClientList {client_list: get_list_of_clients(&callback_client_hashmap, &callback_client_names_hashmap).unwrap()};
 

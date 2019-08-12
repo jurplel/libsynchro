@@ -24,10 +24,10 @@ pub enum Command {
 impl Command {
     pub fn to_u8(&self) -> u8 {
         match self {
-            Command::Pause {paused: _, percent_pos: _} => 1,
-            Command::Seek {percent_pos: _, dragged: _} => 2,
-            Command::UpdateClientList {client_list: _} => 3,
-            Command::SetName {desired_name: _} => 4,
+            Command::Pause {..} => 1,
+            Command::Seek {..} => 2,
+            Command::UpdateClientList {..} => 3,
+            Command::SetName {..} => 4,
             _ => 0,
         }
     }
@@ -125,7 +125,7 @@ impl SynchroConnection {
         let send_job = async move {
             while let Some(data) = unbounded_receiver.next().await {
                 // An empty bytes object is treated as a disconnect signal
-                if data.len() == 0 { break; }
+                if data.is_empty() { break; }
                 sink.send(data).await.unwrap();
             }
             sink.get_mut().shutdown();

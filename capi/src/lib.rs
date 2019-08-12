@@ -69,11 +69,9 @@ pub struct Context(*mut c_void);
 unsafe impl Send for Context {}
 
 #[no_mangle]
-pub extern fn synchro_connection_new(addr: *const c_char, port: u16, func: fn(Context, Synchro_Command), ctx: Context) -> *mut SynchroConnection {
-    let addr = unsafe {
-        assert!(!addr.is_null());
-        CStr::from_ptr(addr)
-    };
+pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16, func: fn(Context, Synchro_Command), ctx: Context) -> *mut SynchroConnection {
+    assert!(!addr.is_null());
+    let addr = CStr::from_ptr(addr);
 
     let addr = addr.to_str().unwrap();
     let addr: SocketAddr = format!("{}:{}", addr, port).parse().unwrap();
@@ -93,37 +91,30 @@ pub extern fn synchro_connection_new(addr: *const c_char, port: u16, func: fn(Co
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
-    let mut connection = unsafe {
-        assert!(!ptr.is_null());
-        Box::from_raw(ptr)
-    };
+pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
+    assert!(!ptr.is_null());
+    let mut connection = Box::from_raw(ptr);
+
     connection.destroy().unwrap();
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
-    let connection = unsafe {
-        assert!(!ptr.is_null());
-        &mut *ptr
-    };
+pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
+    assert!(!ptr.is_null());
+    let connection = &mut *ptr;
 
     connection.run();
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_send(ptr: *mut SynchroConnection, cmd: Synchro_Command) {
-    let connection = unsafe {
-        assert!(!ptr.is_null());
-        &mut *ptr
-    };
+pub unsafe extern fn synchro_connection_send(ptr: *mut SynchroConnection, cmd: Synchro_Command) {
+    assert!(!ptr.is_null());
+    let connection = &mut *ptr;
 
     connection.send(cmd.into_command()).unwrap();
 }
 
 #[no_mangle]
-pub extern fn synchro_char_free(ptr: *mut c_char) {
-    unsafe {
-        CString::from_raw(ptr);
-    }
+pub unsafe extern fn synchro_char_free(ptr: *mut c_char) {
+    CString::from_raw(ptr);
 }
