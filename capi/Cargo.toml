@@ -3,6 +3,7 @@ name = "synchro"
 version = "0.1.0"
 authors = ["jurplel <jurplel@interversehq.com>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 libsynchro = { version = "0.1.0", path = "../" }

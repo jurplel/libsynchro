@@ -3,31 +3,31 @@
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 
-use tokio::sync::mpsc;
-use tokio::runtime::Runtime;
-use tokio::net::TcpStream;
 use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
+use tokio::net::TcpStream;
 use tokio::prelude::*;
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command {
     Invalid,
-    Pause {paused: bool, percent_pos: f64},
-    Seek {percent_pos: f64, dragged: bool},
-    UpdateClientList {client_list: String},
-    SetName {desired_name: String},
+    Pause { paused: bool, percent_pos: f64 },
+    Seek { percent_pos: f64, dragged: bool },
+    UpdateClientList { client_list: String },
+    SetName { desired_name: String },
 }
 
 impl Command {
     pub fn to_u8(&self) -> u8 {
         match self {
-            Command::Pause {..} => 1,
-            Command::Seek {..} => 2,
-            Command::UpdateClientList {..} => 3,
-            Command::SetName {..} => 4,
+            Command::Pause { .. } => 1,
+            Command::Seek { .. } => 2,
+            Command::UpdateClientList { .. } => 3,
+            Command::SetName { .. } => 4,
             _ => 0,
         }
     }
@@ -38,21 +38,27 @@ impl Command {
         body.put_u8(self.to_u8());
 
         match self {
-            Command::Pause {paused, percent_pos} => { 
+            Command::Pause {
+                paused,
+                percent_pos,
+            } => {
                 body.put_u8(paused as u8);
                 body.put_f64_be(percent_pos);
-            },
-            Command::Seek {percent_pos, dragged} => {
+            }
+            Command::Seek {
+                percent_pos,
+                dragged,
+            } => {
                 body.put_f64_be(percent_pos);
                 body.put_u8(dragged as u8);
-            },
-            Command::UpdateClientList {client_list} => {
+            }
+            Command::UpdateClientList { client_list } => {
                 body.put(client_list.into_bytes());
-            },
-            Command::SetName {desired_name} => {
+            }
+            Command::SetName { desired_name } => {
                 body.put(desired_name.into_bytes());
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         let mut message = vec![];
@@ -68,31 +74,41 @@ impl Command {
             1 => {
                 let paused = data.get_u8() != 0;
                 let percent_pos = data.get_f64_be();
-                Command::Pause {paused, percent_pos}
-            },
+                Command::Pause {
+                    paused,
+                    percent_pos,
+                }
+            }
             2 => {
                 let percent_pos = data.get_f64_be();
                 let dragged = data.get_u8() != 0;
-                Command::Seek {percent_pos, dragged}
-            },
+                Command::Seek {
+                    percent_pos,
+                    dragged,
+                }
+            }
             3 => {
                 let client_list = String::from_utf8(data.bytes().to_vec()).unwrap();
                 data.advance(client_list.len());
-                Command::UpdateClientList {client_list}
-            },
+                Command::UpdateClientList { client_list }
+            }
             4 => {
                 let desired_name = String::from_utf8(data.bytes().to_vec()).unwrap();
                 data.advance(desired_name.len());
-                Command::SetName {desired_name}
-            },
+                Command::SetName { desired_name }
+            }
             _ => Command::Invalid,
         };
 
         if data.has_remaining() {
-            println!("Warning: {} bytes not used from recieved {:?}", data.remaining(), command)
+            println!(
+                "Warning: {} bytes not used from recieved {:?}",
+                data.remaining(),
+                command
+            )
         };
 
-    command
+        command
     }
 }
 
@@ -107,13 +123,12 @@ pub struct SynchroConnection {
 
 impl SynchroConnection {
     pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
-    let runtime = Runtime::new().unwrap();
-    let connection = runtime.block_on(TcpStream::connect(&addr))?;
+        let runtime = Runtime::new().unwrap();
+        let connection = runtime.block_on(TcpStream::connect(&addr))?;
         Ok(SynchroConnection::from_existing(connection, callback))
     }
 
     pub fn from_existing(socket: TcpStream, callback: CallbackFn) -> Self {
-
         let (read_half, write_half) = socket.split();
 
         let mut stream = FramedRead::new(read_half, BytesCodec::new());
@@ -125,7 +140,9 @@ impl SynchroConnection {
         let send_job = async move {
             while let Some(data) = unbounded_receiver.next().await {
                 // An empty bytes object is treated as a disconnect signal
-                if data.is_empty() { break; }
+                if data.is_empty() {
+                    break;
+                }
                 sink.send(data).await.unwrap();
             }
             sink.get_mut().shutdown();
@@ -140,14 +157,14 @@ impl SynchroConnection {
             while let Some(message) = stream.next().await {
                 // Add newly received information to the buffer
                 buffer.unsplit(message.unwrap());
-                
+
                 loop {
                     // Retrieve message length if we didn't already
                     if anticipated_message_length == 0 {
                         if buffer.len() < 2 {
                             break;
                         }
-                        
+
                         anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
 
                         println!("message length: {}", anticipated_message_length);
@@ -157,7 +174,7 @@ impl SynchroConnection {
                     if buffer.len() < anticipated_message_length as usize {
                         break;
                     }
-                    
+
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
 
                     // Call user-provided callback to handle received commands
@@ -192,7 +209,10 @@ impl SynchroConnection {
         (send_job, receive_job)
     }
 
-    pub fn send(&mut self, command: Command) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
+    pub fn send(
+        &mut self,
+        command: Command,
+    ) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
         self.unbounded_sender.try_send(command.into_bytes())
     }
 
