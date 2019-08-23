@@ -7,9 +7,9 @@ use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 
 use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
 use tokio::net::TcpStream;
-use tokio::prelude::*;
-use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+use tokio::runtime::Runtime;
+use tokio::prelude::*;
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Clone)]
@@ -117,6 +117,7 @@ pub type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub struct SynchroConnection {
     unbounded_sender: mpsc::UnboundedSender<Bytes>,
+    runtime: Runtime,
     send_job: Option<AsyncJob>,
     receive_job: Option<AsyncJob>,
 }
@@ -125,10 +126,11 @@ impl SynchroConnection {
     pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
         let runtime = Runtime::new().unwrap();
         let connection = runtime.block_on(TcpStream::connect(&addr))?;
-        Ok(SynchroConnection::from_existing(connection, callback))
+
+        Ok(SynchroConnection::from_existing(connection, callback, runtime))
     }
 
-    pub fn from_existing(socket: TcpStream, callback: CallbackFn) -> Self {
+    pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Runtime) -> Self {
         let (read_half, write_half) = socket.split();
 
         let mut stream = FramedRead::new(read_half, BytesCodec::new());
@@ -147,8 +149,6 @@ impl SynchroConnection {
             }
             sink.get_mut().shutdown();
         };
-
-        let send_job = Box::pin(send_job);
 
         // Define receive job
         let receive_job = async move {
@@ -185,21 +185,19 @@ impl SynchroConnection {
             }
         };
 
-        let receive_job = Box::pin(receive_job);
-
         SynchroConnection {
             unbounded_sender,
-            send_job: Some(send_job),
-            receive_job: Some(receive_job),
+            runtime,
+            send_job: Some(Box::pin(send_job)),
+            receive_job: Some(Box::pin(receive_job)),
         }
     }
 
     pub fn run(&mut self) {
         let (send_job, receive_job) = self.take_jobs();
-        let runtime = Runtime::new().unwrap();
-        runtime.block_on(async move {
-            tokio::spawn(send_job);
-            receive_job.await;
+        self.runtime.block_on(async move {
+            tokio::spawn(receive_job);
+            send_job.await;
         });
     }
 
