@@ -117,7 +117,7 @@ pub type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub struct SynchroConnection {
     unbounded_sender: mpsc::UnboundedSender<Bytes>,
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     send_job: Option<AsyncJob>,
     receive_job: Option<AsyncJob>,
 }
@@ -127,10 +127,10 @@ impl SynchroConnection {
         let runtime = Runtime::new().unwrap();
         let connection = runtime.block_on(TcpStream::connect(&addr))?;
 
-        Ok(SynchroConnection::from_existing(connection, callback, runtime))
+        Ok(SynchroConnection::from_existing(connection, callback, Some(runtime)))
     }
 
-    pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Runtime) -> Self {
+    pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Option<Runtime>) -> Self {
         let (read_half, write_half) = socket.split();
 
         let mut stream = FramedRead::new(read_half, BytesCodec::new());
@@ -194,8 +194,9 @@ impl SynchroConnection {
     }
 
     pub fn run(&mut self) {
+        assert!(self.runtime.is_some(), "You must pass a runtime to from_existing to use the run function");
         let (send_job, receive_job) = self.take_jobs();
-        self.runtime.block_on(async move {
+        self.runtime.take().unwrap().block_on(async move {
             tokio::spawn(receive_job);
             send_job.await;
         });

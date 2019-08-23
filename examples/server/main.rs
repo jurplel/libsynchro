@@ -79,6 +79,7 @@ impl Client {
         let synchro_conn = Arc::new(Mutex::new(SynchroConnection::from_existing(
             socket,
             Box::new(callback),
+            None
         )));
 
         let synchro_conn2 = synchro_conn.clone();
