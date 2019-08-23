@@ -6,7 +6,5 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-tokio = { git = "https://github.com/dvic/tokio/", branch = "async-await-preview-feature-fix", features = ["async-await-preview"] }
-tokio-futures = { git = "https://github.com/dvic/tokio/", branch = "async-await-preview-feature-fix", features = ["async-await-preview"] }
+tokio = "0.2.0-alpha.2"
 bytes = "0.4"
-futures = "0.1"

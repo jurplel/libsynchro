@@ -1,36 +1,33 @@
 #![feature(async_await)]
 
-mod wrappedtcpstream;
-use wrappedtcpstream::WrappedTcpStream;
-
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use futures::sync::mpsc;
+use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 
-use bytes::{Bytes, BytesMut, IntoBuf, Buf, BufMut};
-
-use tokio::net::TcpStream;
 use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
+use tokio::net::TcpStream;
+use tokio::sync::mpsc;
+use tokio::runtime::Runtime;
 use tokio::prelude::*;
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command {
     Invalid,
-    Pause {paused: bool, percent_pos: f64},
-    Seek {percent_pos: f64, dragged: bool},
-    UpdateClientList {client_list: String},
-    SetName {desired_name: String},
+    Pause { paused: bool, percent_pos: f64 },
+    Seek { percent_pos: f64, dragged: bool },
+    UpdateClientList { client_list: String },
+    SetName { desired_name: String },
 }
 
 impl Command {
     pub fn to_u8(&self) -> u8 {
         match self {
-            Command::Pause {paused: _, percent_pos: _} => 1,
-            Command::Seek {percent_pos: _, dragged: _} => 2,
-            Command::UpdateClientList {client_list: _} => 3,
-            Command::SetName {desired_name: _} => 4,
+            Command::Pause { .. } => 1,
+            Command::Seek { .. } => 2,
+            Command::UpdateClientList { .. } => 3,
+            Command::SetName { .. } => 4,
             _ => 0,
         }
     }
@@ -41,21 +38,27 @@ impl Command {
         body.put_u8(self.to_u8());
 
         match self {
-            Command::Pause {paused, percent_pos} => { 
+            Command::Pause {
+                paused,
+                percent_pos,
+            } => {
                 body.put_u8(paused as u8);
                 body.put_f64_be(percent_pos);
-            },
-            Command::Seek {percent_pos, dragged} => {
+            }
+            Command::Seek {
+                percent_pos,
+                dragged,
+            } => {
                 body.put_f64_be(percent_pos);
                 body.put_u8(dragged as u8);
-            },
-            Command::UpdateClientList {client_list} => {
+            }
+            Command::UpdateClientList { client_list } => {
                 body.put(client_list.into_bytes());
-            },
-            Command::SetName {desired_name} => {
+            }
+            Command::SetName { desired_name } => {
                 body.put(desired_name.into_bytes());
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         let mut message = vec![];
@@ -71,31 +74,41 @@ impl Command {
             1 => {
                 let paused = data.get_u8() != 0;
                 let percent_pos = data.get_f64_be();
-                Command::Pause {paused, percent_pos}
-            },
+                Command::Pause {
+                    paused,
+                    percent_pos,
+                }
+            }
             2 => {
                 let percent_pos = data.get_f64_be();
                 let dragged = data.get_u8() != 0;
-                Command::Seek {percent_pos, dragged}
-            },
+                Command::Seek {
+                    percent_pos,
+                    dragged,
+                }
+            }
             3 => {
                 let client_list = String::from_utf8(data.bytes().to_vec()).unwrap();
                 data.advance(client_list.len());
-                Command::UpdateClientList {client_list}
-            },
+                Command::UpdateClientList { client_list }
+            }
             4 => {
                 let desired_name = String::from_utf8(data.bytes().to_vec()).unwrap();
                 data.advance(desired_name.len());
-                Command::SetName {desired_name}
-            },
+                Command::SetName { desired_name }
+            }
             _ => Command::Invalid,
         };
 
         if data.has_remaining() {
-            println!("Warning: {} bytes not used from recieved {:?}", data.remaining(), command)
+            println!(
+                "Warning: {} bytes not used from recieved {:?}",
+                data.remaining(),
+                command
+            )
         };
 
-    command
+        command
     }
 }
 
@@ -104,38 +117,38 @@ pub type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 pub struct SynchroConnection {
     unbounded_sender: mpsc::UnboundedSender<Bytes>,
+    runtime: Option<Runtime>,
     send_job: Option<AsyncJob>,
     receive_job: Option<AsyncJob>,
 }
 
 impl SynchroConnection {
     pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
-        let connection = TcpStream::connect(&addr).wait()?;
-        Ok(SynchroConnection::from_existing(connection, callback))
+        let runtime = Runtime::new().unwrap();
+        let connection = runtime.block_on(TcpStream::connect(&addr))?;
+
+        Ok(SynchroConnection::from_existing(connection, callback, Some(runtime)))
     }
 
-    pub fn from_existing(socket: TcpStream, callback: CallbackFn) -> Self {
-        let wrapped = WrappedTcpStream(socket);
-
-        let (read_half, write_half) = wrapped.split();
+    pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Option<Runtime>) -> Self {
+        let (read_half, write_half) = socket.split();
 
         let mut stream = FramedRead::new(read_half, BytesCodec::new());
         let mut sink = FramedWrite::new(write_half, BytesCodec::new());
 
-        let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded::<Bytes>();
+        let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded_channel::<Bytes>();
 
         // Define send job
         let send_job = async move {
             while let Some(data) = unbounded_receiver.next().await {
-                let data = data.unwrap();
                 // An empty bytes object is treated as a disconnect signal
-                if data.len() == 0 { break; }
-                sink.send_async(data).await.unwrap();
+                if data.is_empty() {
+                    break;
+                }
+                sink.send(data).await.unwrap();
             }
-            sink.get_mut().shutdown().unwrap();
+            sink.get_mut().shutdown();
         };
-
-        let send_job = Box::pin(send_job);
 
         // Define receive job
         let receive_job = async move {
@@ -144,14 +157,14 @@ impl SynchroConnection {
             while let Some(message) = stream.next().await {
                 // Add newly received information to the buffer
                 buffer.unsplit(message.unwrap());
-                
+
                 loop {
                     // Retrieve message length if we didn't already
                     if anticipated_message_length == 0 {
                         if buffer.len() < 2 {
                             break;
                         }
-                        
+
                         anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
 
                         println!("message length: {}", anticipated_message_length);
@@ -161,7 +174,7 @@ impl SynchroConnection {
                     if buffer.len() < anticipated_message_length as usize {
                         break;
                     }
-                    
+
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
 
                     // Call user-provided callback to handle received commands
@@ -172,20 +185,20 @@ impl SynchroConnection {
             }
         };
 
-        let receive_job = Box::pin(receive_job);
-
         SynchroConnection {
             unbounded_sender,
-            send_job: Some(send_job),
-            receive_job: Some(receive_job),
+            runtime,
+            send_job: Some(Box::pin(send_job)),
+            receive_job: Some(Box::pin(receive_job)),
         }
     }
 
     pub fn run(&mut self) {
+        assert!(self.runtime.is_some(), "You must pass a runtime to from_existing to use the run function");
         let (send_job, receive_job) = self.take_jobs();
-        tokio::run_async(async move {
-            tokio::spawn_async(send_job);
-            receive_job.await;
+        self.runtime.take().unwrap().block_on(async move {
+            tokio::spawn(receive_job);
+            send_job.await;
         });
     }
 
@@ -195,12 +208,15 @@ impl SynchroConnection {
         (send_job, receive_job)
     }
 
-    pub fn send(&self, command: Command) -> Result<(), mpsc::SendError<Bytes>> {
-        self.unbounded_sender.unbounded_send(command.into_bytes())
+    pub fn send(
+        &mut self,
+        command: Command,
+    ) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
+        self.unbounded_sender.try_send(command.into_bytes())
     }
 
-    pub fn destroy(&mut self) -> Result<(), mpsc::SendError<Bytes>> {
-        self.unbounded_sender.unbounded_send(Bytes::new())
+    pub fn destroy(&mut self) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
+        self.unbounded_sender.try_send(Bytes::new())
     }
 }
 

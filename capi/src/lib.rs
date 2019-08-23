@@ -1,12 +1,12 @@
-#![feature(await_macro, async_await)]
+#![feature(async_await)]
 
 extern crate libsynchro;
 
+use std::ffi::c_void;
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::ffi::c_void;
-use std::os::raw::c_char;
 use std::net::SocketAddr;
+use std::os::raw::c_char;
 
 use libsynchro::{Command, SynchroConnection};
 
@@ -14,49 +14,69 @@ use libsynchro::{Command, SynchroConnection};
 #[derive(Debug)]
 pub enum Synchro_Command {
     Invalid,
-    Pause {paused: bool, percent_pos: f64},
-    Seek {percent_pos: f64, dragged: bool},
-    UpdateClientList {client_list: *mut c_char},
-    SetName {desired_name: *mut c_char},
+    Pause { paused: bool, percent_pos: f64 },
+    Seek { percent_pos: f64, dragged: bool },
+    UpdateClientList { client_list: *mut c_char },
+    SetName { desired_name: *mut c_char },
 }
 
 impl Synchro_Command {
     fn from_command(cmd: Command) -> Self {
         match cmd {
             Command::Invalid => Synchro_Command::Invalid,
-            Command::Pause {paused, percent_pos} => Synchro_Command::Pause {paused, percent_pos},
-            Command::Seek {percent_pos, dragged} => Synchro_Command::Seek {percent_pos, dragged},
-            Command::UpdateClientList {client_list} => {
+            Command::Pause {
+                paused,
+                percent_pos,
+            } => Synchro_Command::Pause {
+                paused,
+                percent_pos,
+            },
+            Command::Seek {
+                percent_pos,
+                dragged,
+            } => Synchro_Command::Seek {
+                percent_pos,
+                dragged,
+            },
+            Command::UpdateClientList { client_list } => {
                 let client_list = CString::new(client_list).unwrap().into_raw();
-                Synchro_Command::UpdateClientList {client_list}
-            },
-            Command::SetName {desired_name} => {
+                Synchro_Command::UpdateClientList { client_list }
+            }
+            Command::SetName { desired_name } => {
                 let desired_name = CString::new(desired_name).unwrap().into_raw();
-                Synchro_Command::SetName {desired_name}
-            },
-        } 
+                Synchro_Command::SetName { desired_name }
+            }
+        }
     }
 
     fn into_command(self) -> Command {
         match self {
             Synchro_Command::Invalid => Command::Invalid,
-            Synchro_Command::Pause {paused, percent_pos} => Command::Pause {paused, percent_pos},
-            Synchro_Command::Seek {percent_pos, dragged} => Command::Seek {percent_pos, dragged},
-            Synchro_Command::UpdateClientList {client_list} => { 
-                Command::UpdateClientList {
-                    client_list: unsafe {
-                        assert!(!client_list.is_null()); 
-                        CStr::from_ptr(client_list).to_str().unwrap().to_string()
-                    }
-                }
+            Synchro_Command::Pause {
+                paused,
+                percent_pos,
+            } => Command::Pause {
+                paused,
+                percent_pos,
             },
-            Synchro_Command::SetName {desired_name} => { 
-                Command::SetName {
-                    desired_name: unsafe {
-                        assert!(!desired_name.is_null()); 
-                        CStr::from_ptr(desired_name).to_str().unwrap().to_string()
-                    }
-                }
+            Synchro_Command::Seek {
+                percent_pos,
+                dragged,
+            } => Command::Seek {
+                percent_pos,
+                dragged,
+            },
+            Synchro_Command::UpdateClientList { client_list } => Command::UpdateClientList {
+                client_list: unsafe {
+                    assert!(!client_list.is_null());
+                    CStr::from_ptr(client_list).to_str().unwrap().to_string()
+                },
+            },
+            Synchro_Command::SetName { desired_name } => Command::SetName {
+                desired_name: unsafe {
+                    assert!(!desired_name.is_null());
+                    CStr::from_ptr(desired_name).to_str().unwrap().to_string()
+                },
             },
         }
     }
@@ -69,61 +89,60 @@ pub struct Context(*mut c_void);
 unsafe impl Send for Context {}
 
 #[no_mangle]
-pub extern fn synchro_connection_new(addr: *const c_char, port: u16, func: fn(Context, Synchro_Command), ctx: Context) -> *mut SynchroConnection {
-    let addr = unsafe {
-        assert!(!addr.is_null());
-        CStr::from_ptr(addr)
-    };
+pub unsafe extern "C" fn synchro_connection_new(
+    addr: *const c_char,
+    port: u16,
+    func: fn(Context, Synchro_Command),
+    ctx: Context,
+) -> *mut SynchroConnection {
+    assert!(!addr.is_null());
+    let addr = CStr::from_ptr(addr);
 
-    let addr = addr.to_str().unwrap();
-    let addr: SocketAddr = format!("{}:{}", addr, port).parse().unwrap();
+    let result = || -> Result<*mut SynchroConnection, Box<dyn std::error::Error>> {
+        let addr = addr.to_str()?;
+        let addr: SocketAddr = format!("{}:{}", addr, port).parse()?;
 
-    let callback = move |cmd: Command| {
-        func(ctx, Synchro_Command::from_command(cmd));
-    };
+        let callback = move |cmd: Command| {
+            func(ctx, Synchro_Command::from_command(cmd));
+        };
 
-    let result = SynchroConnection::new(addr, Box::new(callback));
-    match result {
-        Ok(connection) => Box::into_raw(Box::new(connection)),
-        Err(error) => {
-            println!("Error: {}", error);
-            std::ptr::null_mut()
-        }
-    }
+        let conn = SynchroConnection::new(addr, Box::new(callback))?;
+        Ok(Box::into_raw(Box::new(conn)))
+    }();
+    result.unwrap_or_else(|error|{
+        println!("Error: {}", error);
+        std::ptr::null_mut()
+    })
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
-    let mut connection = unsafe {
-        assert!(!ptr.is_null());
-        Box::from_raw(ptr)
-    };
+pub unsafe extern "C" fn synchro_connection_free(ptr: *mut SynchroConnection) {
+    assert!(!ptr.is_null());
+    let mut connection = Box::from_raw(ptr);
+
     connection.destroy().unwrap();
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
-    let connection = unsafe {
-        assert!(!ptr.is_null());
-        &mut *ptr
-    };
+pub unsafe extern "C" fn synchro_connection_run(ptr: *mut SynchroConnection) {
+    assert!(!ptr.is_null());
+    let connection = &mut *ptr;
 
     connection.run();
 }
 
 #[no_mangle]
-pub extern fn synchro_connection_send(ptr: *mut SynchroConnection, cmd: Synchro_Command) {
-    let connection = unsafe {
-        assert!(!ptr.is_null());
-        &mut *ptr
-    };
+pub unsafe extern "C" fn synchro_connection_send(
+    ptr: *mut SynchroConnection,
+    cmd: Synchro_Command,
+) {
+    assert!(!ptr.is_null());
+    let connection = &mut *ptr;
 
     connection.send(cmd.into_command()).unwrap();
 }
 
 #[no_mangle]
-pub extern fn synchro_char_free(ptr: *mut c_char) {
-    unsafe {
-        CString::from_raw(ptr);
-    }
+pub unsafe extern "C" fn synchro_char_free(ptr: *mut c_char) {
+    CString::from_raw(ptr);
 }
