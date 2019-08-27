@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 use libsynchro::*;
 
 use std::collections::HashMap;

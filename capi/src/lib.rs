@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 extern crate libsynchro;
 
 use std::ffi::c_void;
