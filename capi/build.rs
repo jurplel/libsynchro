@@ -22,10 +22,12 @@ fn main() {
         ..Config::default()
     };
 
+    let crates_to_parse = ["libsynchro"];
     Builder::new()
         .with_crate(&crate_dir)
         .with_config(config_c)
         .with_parse_deps(true)
+        .with_parse_include(&crates_to_parse)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("target/include/libsynchro.h");
@@ -34,6 +36,7 @@ fn main() {
         .with_crate(&crate_dir)
         .with_config(config_cxx)
         .with_parse_deps(true)
+        .with_parse_include(&crates_to_parse)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("target/include/libsynchro.hpp");
