@@ -130,6 +130,12 @@ impl SynchroConnection {
         Ok(SynchroConnection::from_existing(connection, callback, Some(runtime)))
     }
 
+    pub async fn new_async(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
+        let connection = TcpStream::connect(&addr).await?;
+
+        Ok(SynchroConnection::from_existing(connection, callback, None))
+    }
+
     pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Option<Runtime>) -> Self {
         let (read_half, write_half) = socket.split();
 
@@ -166,8 +172,6 @@ impl SynchroConnection {
                         }
 
                         anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
-
-                        println!("message length: {}", anticipated_message_length);
                     }
 
                     // Process the rest of the message if we're sure that we have the entire thing
@@ -177,8 +181,12 @@ impl SynchroConnection {
 
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
 
+                    let command = Command::from_buf(split_bytes.into_buf());
+
+                    println!("{:?}", command);
+
                     // Call user-provided callback to handle received commands
-                    (callback.as_ref())(Command::from_buf(split_bytes.into_buf()));
+                    (callback.as_ref())(command);
 
                     anticipated_message_length = 0;
                 }
