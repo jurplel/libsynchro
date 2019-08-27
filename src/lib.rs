@@ -194,7 +194,7 @@ impl SynchroConnection {
     }
 
     pub fn run(&mut self) {
-        assert!(self.runtime.is_some(), "You must pass a runtime to from_existing to use the run function");
+        assert!(self.runtime.is_some(), "Runtime not found; You must pass a runtime to from_existing to use the run function");
         let (send_job, receive_job) = self.take_jobs();
         self.runtime.take().unwrap().block_on(async move {
             tokio::spawn(receive_job);
