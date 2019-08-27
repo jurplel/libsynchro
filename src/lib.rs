@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
 use tokio::prelude::*;
 
-#[repr(C)]
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command {
     Invalid,

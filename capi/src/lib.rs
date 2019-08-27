@@ -87,7 +87,7 @@ pub struct Context(*mut c_void);
 unsafe impl Send for Context {}
 
 #[no_mangle]
-pub unsafe extern "C" fn synchro_connection_new(
+pub unsafe extern fn synchro_connection_new(
     addr: *const c_char,
     port: u16,
     func: fn(Context, Synchro_Command),
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn synchro_connection_new(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn synchro_connection_free(ptr: *mut SynchroConnection) {
+pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
     let mut connection = Box::from_raw(ptr);
 
@@ -122,7 +122,7 @@ pub unsafe extern "C" fn synchro_connection_free(ptr: *mut SynchroConnection) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn synchro_connection_run(ptr: *mut SynchroConnection) {
+pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
     let connection = &mut *ptr;
 
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn synchro_connection_run(ptr: *mut SynchroConnection) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn synchro_connection_send(
+pub unsafe extern fn synchro_connection_send(
     ptr: *mut SynchroConnection,
     cmd: Synchro_Command,
 ) {
@@ -141,6 +141,6 @@ pub unsafe extern "C" fn synchro_connection_send(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn synchro_char_free(ptr: *mut c_char) {
+pub unsafe extern fn synchro_char_free(ptr: *mut c_char) {
     CString::from_raw(ptr);
 }
