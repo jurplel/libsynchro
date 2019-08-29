@@ -90,7 +90,7 @@ unsafe impl Send for Context {}
 pub unsafe extern fn synchro_connection_new(
     addr: *const c_char,
     port: u16,
-    func: fn(Context, Synchro_Command),
+    func: extern fn(Context, Synchro_Command),
     ctx: Context,
 ) -> *mut SynchroConnection {
     assert!(!addr.is_null());
@@ -101,7 +101,9 @@ pub unsafe extern fn synchro_connection_new(
         let addr: SocketAddr = format!("{}:{}", addr, port).parse()?;
 
         let callback = move |cmd: Command| {
-            func(ctx, Synchro_Command::from_command(cmd));
+            let cmd = Synchro_Command::from_command(cmd);
+            println!("{:?}", cmd);
+            func(ctx, cmd);
         };
 
         let conn = SynchroConnection::new(addr, Box::new(callback))?;
