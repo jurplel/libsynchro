@@ -148,8 +148,16 @@ pub unsafe extern fn synchro_char_free(ptr: *mut c_char) {
 }
 
 #[no_mangle]
-pub extern fn synchro_get_server_list(url: Option<&str>) -> *mut c_char {
-    let server_vec = libsynchro::get_server_list(url).unwrap();
+pub unsafe extern fn synchro_get_server_list(url: *const c_char) -> *mut c_char {
+    let url = CStr::from_ptr(url);
+    let url_slice = url.to_str().unwrap();
+
+    let mut url_option = None;
+    if !url_slice.is_empty() {
+        url_option = Some(url_slice);
+    };
+
+    let server_vec = libsynchro::get_server_list(url_option).unwrap();
     let joined = server_vec.join(",");
     CString::new(joined).unwrap().into_raw()
 }
