@@ -112,7 +112,7 @@ impl Drop for Client {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = start_server(32019)?;
+    let listener = start_server(32019).await?;
     println!("Server started sucessfully on {}", listener.local_addr()?);
 
     let client_hashmap: ClientHashmapArc = Arc::new(Mutex::new(HashMap::new()));
@@ -134,9 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn start_server(port: u16) -> Result<TcpListener, Box<dyn std::error::Error>> {
+async fn start_server(port: u16) -> Result<TcpListener, Box<dyn std::error::Error>> {
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?; // to-do: add ipv6
-    let listener = TcpListener::bind(&addr)?;
+    let listener = TcpListener::bind(&addr).await?;
     Ok(listener)
 }
 
