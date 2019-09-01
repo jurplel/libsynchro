@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
 use tokio::prelude::*;
 
+use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command {
@@ -224,6 +225,19 @@ impl SynchroConnection {
     pub fn destroy(&mut self) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
         self.unbounded_sender.try_send(Bytes::new())
     }
+}
+
+#[derive(Deserialize)]
+struct SynchroJsonData {
+    servers: Vec<String>,
+}
+
+pub fn get_server_list(url: Option<&str>) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let url = url.unwrap_or("https://interversehq.com/synchro/synchro.json");
+
+    let body: SynchroJsonData = reqwest::get(url)?.json()?;
+
+    Ok(body.servers)
 }
 
 #[cfg(test)]
