@@ -146,3 +146,10 @@ pub unsafe extern fn synchro_connection_send(
 pub unsafe extern fn synchro_char_free(ptr: *mut c_char) {
     CString::from_raw(ptr);
 }
+
+#[no_mangle]
+pub extern fn synchro_get_server_list(url: Option<&str>) -> *mut c_char {
+    let server_vec = libsynchro::get_server_list(url).unwrap();
+    let joined = server_vec.join(",");
+    CString::new(joined).unwrap().into_raw()
+}
