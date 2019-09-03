@@ -229,10 +229,16 @@ impl SynchroConnection {
 
 #[derive(Deserialize)]
 struct SynchroJsonData {
-    servers: Vec<String>,
+    servers: Vec<Server>,
 }
 
-pub fn get_server_list(url: Option<&str>) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+#[derive(Deserialize, Debug)]
+pub struct Server {
+    name: String,
+    ip: String,
+}
+
+pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, Box<dyn std::error::Error>> {
     let url = url.unwrap_or("https://interversehq.com/synchro/synchro.json");
 
     let body: SynchroJsonData = reqwest::get(url)?.json()?;

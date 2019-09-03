@@ -13,7 +13,7 @@ async fn main() {
         addr_str = args[1].as_ref();
     }
 
-    println!("server list: {:?}", libsynchro::get_server_list(None));
+    println!("server list: {:?}", libsynchro::get_server_list(None).unwrap());
 
     use libsynchro::SynchroConnection;
     let addr: SocketAddr = addr_str.parse().unwrap();
