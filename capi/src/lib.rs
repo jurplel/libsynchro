@@ -157,7 +157,20 @@ pub unsafe extern fn synchro_get_server_list(url: *const c_char) -> *mut c_char 
         url_option = Some(url_slice);
     };
 
-    let server_vec = libsynchro::get_server_list(url_option).unwrap();
-    let joined = server_vec.join(",");
-    CString::new(joined).unwrap().into_raw()
+    let server_list = libsynchro::get_server_list(url_option).unwrap();
+
+    let mut server_string = String::new();
+    for x in 0..server_list.len() {
+        let server = &server_list[x];
+        server_string += &server.name;
+        server_string += ",";
+        server_string += &server.ip;
+
+        // Don't add a semicolon to the end
+        if x != &server_list.len()-1 {
+            server_string += ";";
+        } 
+    }
+
+    CString::new(server_string).unwrap().into_raw()
 }

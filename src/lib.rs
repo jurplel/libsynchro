@@ -232,10 +232,10 @@ struct SynchroJsonData {
     servers: Vec<Server>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, PartialEq, Clone)]
 pub struct Server {
-    name: String,
-    ip: String,
+    pub name: String,
+    pub ip: String,
 }
 
 pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, Box<dyn std::error::Error>> {
