@@ -136,7 +136,7 @@ impl SynchroConnection {
     }
 
     pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Option<Runtime>) -> Self {
-        let (read_half, write_half) = socket.split();
+        let (read_half, write_half) = tokio::io::split(socket);
 
         let mut stream = FramedRead::new(read_half, BytesCodec::new());
         let mut sink = FramedWrite::new(write_half, BytesCodec::new());
