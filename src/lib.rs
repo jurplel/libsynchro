@@ -1,12 +1,15 @@
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
+use futures::sink::SinkExt;
 
-use tokio::codec::{BytesCodec, FramedRead, FramedWrite};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
+use tokio::stream::StreamExt;
 use tokio::prelude::*;
 
 use serde::Deserialize;
@@ -42,26 +45,26 @@ impl Command {
                 percent_pos,
             } => {
                 body.put_u8(paused as u8);
-                body.put_f64_be(percent_pos);
+                body.put_f64(percent_pos);
             }
             Command::Seek {
                 percent_pos,
                 dragged,
             } => {
-                body.put_f64_be(percent_pos);
+                body.put_f64(percent_pos);
                 body.put_u8(dragged as u8);
             }
             Command::UpdateClientList { client_list } => {
-                body.put(client_list.into_bytes());
+                body.put(Bytes::from(client_list));
             }
             Command::SetName { desired_name } => {
-                body.put(desired_name.into_bytes());
+                body.put(Bytes::from(desired_name));
             }
             _ => {}
         }
 
         let mut message = vec![];
-        message.put_u16_be(body.len() as u16);
+        message.put_u16(body.len() as u16);
         message.append(&mut body);
         Bytes::from(message)
     }
@@ -72,14 +75,14 @@ impl Command {
         let command = match numeric_command {
             1 => {
                 let paused = data.get_u8() != 0;
-                let percent_pos = data.get_f64_be();
+                let percent_pos = data.get_f64();
                 Command::Pause {
                     paused,
                     percent_pos,
                 }
             }
             2 => {
-                let percent_pos = data.get_f64_be();
+                let percent_pos = data.get_f64();
                 let dragged = data.get_u8() != 0;
                 Command::Seek {
                     percent_pos,
@@ -123,7 +126,7 @@ pub struct SynchroConnection {
 
 impl SynchroConnection {
     pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
-        let runtime = Runtime::new().unwrap();
+        let mut runtime = Runtime::new().unwrap();
         let connection = runtime.block_on(TcpStream::connect(&addr))?;
 
         Ok(SynchroConnection::from_existing(connection, callback, Some(runtime)))
@@ -170,7 +173,7 @@ impl SynchroConnection {
                             break;
                         }
 
-                        anticipated_message_length = buffer.split_to(2).into_buf().get_u16_be();
+                        anticipated_message_length = buffer.split_to(2).get_u16();
                     }
 
                     // Process the rest of the message if we're sure that we have the entire thing
@@ -180,7 +183,7 @@ impl SynchroConnection {
 
                     let split_bytes = buffer.split_to(anticipated_message_length as usize);
 
-                    let command = Command::from_buf(split_bytes.into_buf());
+                    let command = Command::from_buf(split_bytes);
 
                     println!("{:?}", command);
 
@@ -218,12 +221,12 @@ impl SynchroConnection {
     pub fn send(
         &mut self,
         command: Command,
-    ) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
-        self.unbounded_sender.try_send(command.into_bytes())
+    ) -> Result<(), mpsc::error::SendError<Bytes>> {
+        self.unbounded_sender.send(command.into_bytes())
     }
 
-    pub fn destroy(&mut self) -> Result<(), mpsc::error::UnboundedTrySendError<Bytes>> {
-        self.unbounded_sender.try_send(Bytes::new())
+    pub fn destroy(&mut self) -> Result<(), mpsc::error::SendError<Bytes>> {
+        self.unbounded_sender.send(Bytes::new())
     }
 }
 
