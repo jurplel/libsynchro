@@ -5,12 +5,13 @@ use futures::sink::SinkExt;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
 use tokio::stream::StreamExt;
 use tokio::prelude::*;
+
+use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 
 use serde::Deserialize;
 
