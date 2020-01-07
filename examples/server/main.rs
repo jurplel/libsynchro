@@ -5,8 +5,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::prelude::*;
 use tokio::sync::mpsc;
+use tokio::stream::StreamExt;
 
 type ClientHashmapArc = Arc<Mutex<HashMap<SocketAddr, mpsc::UnboundedSender<Command>>>>;
 type ClientNamesHashmapArc = Arc<Mutex<HashMap<SocketAddr, String>>>;
@@ -49,7 +49,7 @@ impl Client {
                         .unwrap()
                         .get_mut(&addr)
                         .unwrap()
-                        .try_send(new_cmd)
+                        .send(new_cmd)
                         .unwrap();
                 }
                 Command::SetName { desired_name } => {
@@ -67,7 +67,7 @@ impl Client {
                 _ => {
                     for (peer_addr, sender) in callback_client_hashmap.lock().unwrap().iter_mut() {
                         if *peer_addr != addr {
-                            sender.try_send(cmd.clone()).unwrap();
+                            sender.send(cmd.clone()).unwrap();
                         }
                     }
                 }
@@ -112,7 +112,7 @@ impl Drop for Client {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = start_server(32019).await?;
+    let mut listener = start_server(32019).await?;
     println!("Server started sucessfully on {}", listener.local_addr()?);
 
     let client_hashmap: ClientHashmapArc = Arc::new(Mutex::new(HashMap::new()));
@@ -170,7 +170,7 @@ fn send_client_list_to_all(
     let retrieved_list = get_list_of_clients(client_hashmap, client_names_hashmap)?;
     let mut clients = client_hashmap.lock().unwrap();
     for sender in clients.values_mut() {
-        sender.try_send(Command::UpdateClientList {
+        sender.send(Command::UpdateClientList {
             client_list: retrieved_list.clone(),
         })?;
     }

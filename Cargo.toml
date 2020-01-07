@@ -13,7 +13,7 @@ futures = "0.3"
 
 [dependencies.tokio]
 version = "0.2"
-features = ["tcp", "sync", "io-util", "rt-core", "stream"]
+features = ["tcp", "sync", "io-util", "rt-core", "stream", "macros"]
 
 [dependencies.tokio-util]
 version = "0.2"
