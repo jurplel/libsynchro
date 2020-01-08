@@ -22,6 +22,7 @@ pub enum Command {
     Seek { percent_pos: f64, dragged: bool },
     UpdateClientList { client_list: String },
     SetName { desired_name: String },
+    SetCurrentFile { file_size: u64, file_duration: f64, file_name: String},
 }
 
 impl Command {
@@ -31,6 +32,7 @@ impl Command {
             Command::Seek { .. } => 2,
             Command::UpdateClientList { .. } => 3,
             Command::SetName { .. } => 4,
+            Command::SetCurrentFile {..} => 5,
             _ => 0,
         }
     }
@@ -60,6 +62,11 @@ impl Command {
             }
             Command::SetName { desired_name } => {
                 body.put(Bytes::from(desired_name));
+            }
+            Command::SetCurrentFile { file_size, file_duration, file_name } => {
+                body.put_u64(file_size);
+                body.put_f64(file_duration);
+                body.put(Bytes::from(file_name));
             }
             _ => {}
         }
@@ -100,14 +107,22 @@ impl Command {
                 data.advance(desired_name.len());
                 Command::SetName { desired_name }
             }
+            5 => {
+                let file_size = data.get_u64();
+                let file_duration = data.get_f64();
+                let file_name = String::from_utf8(data.bytes().to_vec()).unwrap();
+                data.advance(file_name.len());
+                Command::SetCurrentFile { file_size, file_duration, file_name }
+            }
             _ => Command::Invalid,
         };
 
         if data.has_remaining() {
             println!(
-                "Warning: {} bytes not used from recieved {:?}",
+                "Warning: {} bytes not used from recieved {:?} ({})",
                 data.remaining(),
-                command
+                command,
+                numeric_command
             )
         };
 
@@ -223,6 +238,7 @@ impl SynchroConnection {
         &mut self,
         command: Command,
     ) -> Result<(), mpsc::error::SendError<Bytes>> {
+        println!("{:?}", command);
         self.unbounded_sender.send(command.into_bytes())
     }
 

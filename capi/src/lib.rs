@@ -16,6 +16,7 @@ pub enum Synchro_Command {
     Seek { percent_pos: f64, dragged: bool },
     UpdateClientList { client_list: *mut c_char },
     SetName { desired_name: *mut c_char },
+    SetCurrentFile { file_size: u64, file_duration: f64, file_name: *mut c_char },
 }
 
 impl Synchro_Command {
@@ -43,6 +44,10 @@ impl Synchro_Command {
             Command::SetName { desired_name } => {
                 let desired_name = CString::new(desired_name).unwrap().into_raw();
                 Synchro_Command::SetName { desired_name }
+            }
+            Command::SetCurrentFile { file_size, file_duration, file_name } => {
+                let file_name = CString::new(file_name).unwrap().into_raw();
+                Synchro_Command::SetCurrentFile { file_size, file_duration, file_name }
             }
         }
     }
@@ -76,6 +81,14 @@ impl Synchro_Command {
                     CStr::from_ptr(desired_name).to_str().unwrap().to_string()
                 },
             },
+            Synchro_Command::SetCurrentFile { file_size, file_duration, file_name } => Command::SetCurrentFile {
+                file_size,
+                file_duration,
+                file_name: unsafe {
+                    assert!(!file_name.is_null());
+                    CStr::from_ptr(file_name).to_str().unwrap().to_string()
+                }
+            }
         }
     }
 }
