@@ -1,12 +1,14 @@
 extern crate libsynchro;
 
+use std::sync::Arc;
+
 use std::ffi::c_void;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::net::SocketAddr;
 use std::os::raw::c_char;
 
-use libsynchro::{Command, SynchroConnection};
+use libsynchro::{Command, Event, SynchroConnection};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -93,19 +95,39 @@ impl Synchro_Command {
     }
 }
 
+#[repr(C)]
+#[derive(Debug)]
+pub enum Synchro_Event {
+    CommandReceived { command: Synchro_Command },
+}
+
+impl Synchro_Event {
+    fn from_event(event: Event) -> Self {
+        match event {
+            Event::CommandReceived { command } => Synchro_Event::CommandReceived {
+                command: Synchro_Command::from_command(command)
+            }
+        }
+    }
+
+    fn into_event(self) -> Event {
+        match self {
+            Synchro_Event::CommandReceived { command } => Event::CommandReceived {
+                command: command.into_command()
+            }
+        }
+    }
+}
+
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct Context(*mut c_void);
 
+unsafe impl Sync for Context {}
 unsafe impl Send for Context {}
 
 #[no_mangle]
-pub unsafe extern fn synchro_connection_new(
-    addr: *const c_char,
-    port: u16,
-    func: extern fn(Context, Synchro_Command),
-    ctx: Context,
-) -> *mut SynchroConnection {
+pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16) -> *mut SynchroConnection {
     assert!(!addr.is_null());
     let addr = CStr::from_ptr(addr);
 
@@ -113,19 +135,27 @@ pub unsafe extern fn synchro_connection_new(
         let addr = addr.to_str()?;
         let addr: SocketAddr = format!("{}:{}", addr, port).parse()?;
 
-        let callback = move |cmd: Command| {
-            let cmd = Synchro_Command::from_command(cmd);
-            println!("{:?}", cmd);
-            func(ctx, cmd);
-        };
-
-        let conn = SynchroConnection::new(addr, Box::new(callback))?;
+        let conn = SynchroConnection::new(addr)?;
         Ok(Box::into_raw(Box::new(conn)))
     }();
     result.unwrap_or_else(|error|{
         println!("Error: {}", error);
         std::ptr::null_mut()
     })
+}
+
+#[no_mangle]
+pub unsafe extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, callback: extern fn(Synchro_Event, Context), ctx: Context)
+{    
+    assert!(!ptr.is_null());
+    let mut connection = Box::from_raw(ptr);
+    let cb = move |event: Event| {
+        let event = Synchro_Event::from_event(event);
+        println!("Event going to callback {:?}", event);
+        callback(event, ctx);
+    };
+
+    connection.set_callback(Arc::new(cb));
 }
 
 #[no_mangle]
@@ -141,7 +171,7 @@ pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
     let connection = &mut *ptr;
 
-    connection.run();
+    connection.run_blocking();
 }
 
 #[no_mangle]

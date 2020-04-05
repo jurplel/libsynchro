@@ -6,15 +6,8 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-serde = "1.0"
-reqwest = "0.9"
+async-std = "1.5"
+surf = "2.0.0-alpha.0"
+serde = { version = "1.0", features = ["derive"] }
 bytes = "0.5"
-futures = "0.3"
-
-[dependencies.tokio]
-version = "0.2"
-features = ["tcp", "sync", "io-util", "rt-core", "stream", "macros"]
-
-[dependencies.tokio-util]
-version = "0.2"
-features = ["codec"]
+futures-channel = "0.3"

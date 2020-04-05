@@ -9,7 +9,7 @@ license = "MIT"
 libsynchro = { version = "0.1.0", path = "../" }
 
 [build-dependencies]
-cbindgen = "0.13.2"
+cbindgen = "0.14"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

@@ -1,17 +1,13 @@
 use std::net::SocketAddr;
-use std::pin::Pin;
-
-use futures::sink::SinkExt;
-
+use std::sync::Arc;
+use std::net::Shutdown;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use tokio::net::TcpStream;
-use tokio::sync::mpsc;
-use tokio::runtime::Runtime;
-use tokio::stream::StreamExt;
-use tokio::prelude::*;
+use futures_channel::mpsc;
 
-use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
+use async_std::prelude::*;
+use async_std::net::TcpStream;
+use async_std::task;
 
 use serde::Deserialize;
 
@@ -119,7 +115,7 @@ impl Command {
 
         if data.has_remaining() {
             println!(
-                "Warning: {} bytes not used from recieved {:?} ({})",
+                "Warning: {} left over bytes from {:?} ({})",
                 data.remaining(),
                 command,
                 numeric_command
@@ -130,122 +126,112 @@ impl Command {
     }
 }
 
-pub type CallbackFn = Box<dyn Fn(Command) + Send>;
-pub type AsyncJob = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
-
-pub struct SynchroConnection {
-    unbounded_sender: mpsc::UnboundedSender<Bytes>,
-    runtime: Option<Runtime>,
-    send_job: Option<AsyncJob>,
-    receive_job: Option<AsyncJob>,
+#[derive(Debug, PartialEq, Clone)]
+pub enum Event {
+    CommandReceived { command: Command },
 }
 
-impl SynchroConnection {
-    pub fn new(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut runtime = Runtime::new().unwrap();
-        let connection = runtime.block_on(TcpStream::connect(&addr))?;
+pub type CallbackFn = Arc<dyn Fn(Event) + Sync + Send>;
 
-        Ok(SynchroConnection::from_existing(connection, callback, Some(runtime)))
+pub struct SynchroConnection {
+    stream: Box<TcpStream>,
+    unbounded_sender: Option<mpsc::UnboundedSender<Bytes>>,
+    callback: Option<CallbackFn>
+}
+
+
+impl SynchroConnection {
+    pub fn new(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
+        let connection = task::block_on(TcpStream::connect(&addr))?;
+
+        Ok(SynchroConnection::from_existing(connection))
     }
 
-    pub async fn new_async(addr: SocketAddr, callback: CallbackFn) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new_async(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let connection = TcpStream::connect(&addr).await?;
 
-        Ok(SynchroConnection::from_existing(connection, callback, None))
+        Ok(SynchroConnection::from_existing(connection))
     }
 
-    pub fn from_existing(socket: TcpStream, callback: CallbackFn, runtime: Option<Runtime>) -> Self {
-        let (read_half, write_half) = tokio::io::split(socket);
+    pub fn set_callback(&mut self, callback: CallbackFn) {
+        self.callback = Some(callback);
+    }
 
-        let mut stream = FramedRead::new(read_half, BytesCodec::new());
-        let mut sink = FramedWrite::new(write_half, BytesCodec::new());
+    pub fn from_existing(stream: TcpStream) -> Self {
+        let stream = Box::new(stream);
+        let callback = None;
 
-        let (unbounded_sender, mut unbounded_receiver) = mpsc::unbounded_channel::<Bytes>();
-
-        // Define send job
-        let send_job = async move {
-            while let Some(data) = unbounded_receiver.next().await {
-                // An empty bytes object is treated as a disconnect signal
-                if data.is_empty() {
-                    break;
-                }
-                sink.send(data).await.unwrap();
-            }
-            sink.get_mut().shutdown();
-        };
-
-        // Define receive job
-        let receive_job = async move {
-            let mut buffer = BytesMut::new();
-            let mut anticipated_message_length: u16 = 0;
-            while let Some(message) = stream.next().await {
-                // Add newly received information to the buffer
-                buffer.unsplit(message.unwrap());
-
-                loop {
-                    // Retrieve message length if we didn't already
-                    if anticipated_message_length == 0 {
-                        if buffer.len() < 2 {
-                            break;
-                        }
-
-                        anticipated_message_length = buffer.split_to(2).get_u16();
-                    }
-
-                    // Process the rest of the message if we're sure that we have the entire thing
-                    if buffer.len() < anticipated_message_length as usize {
-                        break;
-                    }
-
-                    let split_bytes = buffer.split_to(anticipated_message_length as usize);
-
-                    let command = Command::from_buf(split_bytes);
-
-                    println!("{:?}", command);
-
-                    // Call user-provided callback to handle received commands
-                    (callback.as_ref())(command);
-
-                    anticipated_message_length = 0;
-                }
-            }
-        };
 
         SynchroConnection {
-            unbounded_sender,
-            runtime,
-            send_job: Some(Box::pin(send_job)),
-            receive_job: Some(Box::pin(receive_job)),
+            stream,
+            unbounded_sender: None,
+            callback,
         }
     }
 
-    pub fn run(&mut self) {
-        assert!(self.runtime.is_some(), "Runtime not found; You must pass a runtime to from_existing to use the run function");
-        let (send_job, receive_job) = self.take_jobs();
-        self.runtime.take().unwrap().block_on(async move {
-            tokio::spawn(receive_job);
-            send_job.await;
-        });
+    pub fn run_blocking(&mut self) {
+        task::block_on(self.run());
     }
 
-    pub fn take_jobs(&mut self) -> (AsyncJob, AsyncJob) {
-        let send_job = self.send_job.take().unwrap();
-        let receive_job = self.receive_job.take().unwrap();
-        (send_job, receive_job)
+    pub async fn run(&mut self) {
+        let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Bytes>();
+        self.unbounded_sender = Some(unbounded_sender);
+        
+        task::spawn(receive_data(self.stream.clone(), self.callback.clone()));
+        send_data(self.stream.clone(), unbounded_receiver).await.unwrap();
+
+        self.unbounded_sender = None;
     }
 
     pub fn send(
         &mut self,
         command: Command,
-    ) -> Result<(), mpsc::error::SendError<Bytes>> {
-        println!("{:?}", command);
-        self.unbounded_sender.send(command.into_bytes())
+    ) -> Result<(), mpsc::TrySendError<Bytes>> {
+        println!("Sending {:?}", command);
+        if let Some(sender) = &self.unbounded_sender {
+            sender.unbounded_send(command.into_bytes())?;
+        }
+        Ok(())
     }
 
-    pub fn destroy(&mut self) -> Result<(), mpsc::error::SendError<Bytes>> {
-        self.unbounded_sender.send(Bytes::new())
+    pub fn destroy(&mut self) -> Result<(), mpsc::TrySendError<Bytes>> {
+        if let Some(sender) = &self.unbounded_sender {
+            sender.unbounded_send(Bytes::new())?;
+        }
+        Ok(())
     }
 }
+
+pub async fn receive_data(mut stream: Box<TcpStream>, callback: Option<CallbackFn>) -> Result<(), Box<std::io::Error>> {
+    loop {
+        // 2 bytes for u16
+        let mut buf = BytesMut::with_capacity(2);
+        stream.read_exact(buf.as_mut()).await?;
+        let anticipated_message_length = buf.get_u16();
+
+        let mut buf = BytesMut::with_capacity(anticipated_message_length as usize);
+        stream.read_exact(buf.as_mut()).await?;
+        let command = Command::from_buf(buf);
+        
+        println!("Received {:?}", command);
+
+        if let Some(cb) = &callback {
+            (&cb)(Event::CommandReceived { command });
+        }
+    }
+}
+
+pub async fn send_data(mut stream: Box<TcpStream>, mut unbounded_receiver: mpsc::UnboundedReceiver<Bytes>) -> Result<(), Box<std::io::Error>> {
+    while let Some(data) = unbounded_receiver.next().await {
+        if data.is_empty() {
+            break;
+        }
+        stream.write(&data).await?;
+    }
+    stream.shutdown(Shutdown::Both)?;
+    Ok(())
+}
+
 
 #[derive(Deserialize)]
 struct SynchroJsonData {
@@ -258,10 +244,10 @@ pub struct Server {
     pub ip: String,
 }
 
-pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, Box<dyn std::error::Error>> {
+pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, surf::Exception> {
     let url = url.unwrap_or("https://interversehq.com/synchro/synchro.json");
 
-    let body: SynchroJsonData = reqwest::get(url)?.json()?;
+    let body: SynchroJsonData = task::block_on(surf::get(url).recv_json())?;
 
     Ok(body.servers)
 }
