@@ -169,16 +169,12 @@ impl SynchroConnection {
         }
     }
 
-    pub fn run_blocking(&mut self) {
-        task::block_on(self.run());
-    }
-
-    pub async fn run(&mut self) {
+    pub fn run(&mut self) {
         let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Bytes>();
         self.unbounded_sender = Some(unbounded_sender);
         
         task::spawn(receive_data(self.stream.clone(), self.callback.clone()));
-        send_data(self.stream.clone(), unbounded_receiver).await.unwrap();
+        task::spawn(send_data(self.stream.clone(), unbounded_receiver));
 
         self.unbounded_sender = None;
     }
@@ -244,7 +240,7 @@ pub struct Server {
     pub ip: String,
 }
 
-pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, surf::Exception> {
+pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, surf::Error> {
     let url = url.unwrap_or("https://interversehq.com/synchro/synchro.json");
 
     let body: SynchroJsonData = task::block_on(surf::get(url).recv_json())?;
