@@ -192,8 +192,8 @@ impl SynchroConnection {
         &mut self,
         command: Command,
     ) -> Result<(), mpsc::TrySendError<Bytes>> {
-        println!("Sending {:?}", command);
         if let Some(sender) = &self.unbounded_sender {
+            println!("Sending {:?}", command);
             sender.unbounded_send(command.into_bytes())?;
         }
         Ok(())
@@ -214,16 +214,19 @@ impl Drop for SynchroConnection {
 }
 
 pub async fn receive_loop(mut stream: Box<TcpStream>, callback: Option<CallbackFn>) -> Result<(), Box<std::io::Error>> {
+    println!("Start receive_loop");
     loop {
+        println!("0");
         // 2 bytes for u16
         let mut buf = BytesMut::with_capacity(2);
-        let mut vec: Vec<u8> = vec!();
-        // stream.read_exact(buf.as_mut()).await?;
-        stream.read_to_end(&mut vec).await?;
-        println!("{:?}", vec);
+        buf.resize(2, 0);
+        stream.read_exact(buf.as_mut()).await?;
         let anticipated_message_length = buf.get_u16();
 
+        println!("1");
+
         let mut buf = BytesMut::with_capacity(anticipated_message_length as usize);
+        buf.resize(anticipated_message_length as usize, 0);
         stream.read_exact(buf.as_mut()).await?;
         let command = Command::from_buf(buf);
         
@@ -236,12 +239,15 @@ pub async fn receive_loop(mut stream: Box<TcpStream>, callback: Option<CallbackF
 }
 
 pub async fn send_loop(mut stream: Box<TcpStream>, mut unbounded_receiver: mpsc::UnboundedReceiver<Bytes>) -> Result<(), Box<std::io::Error>> {
+    println!("Start send_loop");
     while let Some(data) = unbounded_receiver.next().await {
+        println!("Writing {:?}", &data);
         if data.is_empty() {
             break;
         }
         stream.write(&data).await?;
     }
+    println!("Shutting down stream");
     stream.shutdown(Shutdown::Both)?;
     Ok(())
 }
@@ -264,6 +270,17 @@ pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, surf::Error> {
     let body: SynchroJsonData = task::block_on(surf::get(url).recv_json())?;
 
     Ok(body.servers)
+}
+
+fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
+where
+    F: Future<Output = Result<(), Box<std::io::Error>>> + Send + 'static,
+{
+    task::spawn(async move {
+        if let Err(e) = fut.await {
+            eprintln!("{}", e)
+        }
+    })
 }
 
 #[cfg(test)]
