@@ -131,6 +131,7 @@ pub enum Event {
     CommandReceived { command: Command },
 }
 
+pub type NewCallbackFn = Arc<dyn Fn(Result<SynchroConnection, std::io::Error>) + Sync + Send>;
 pub type CallbackFn = Arc<dyn Fn(Event) + Sync + Send>;
 
 pub struct SynchroConnection {
@@ -141,7 +142,17 @@ pub struct SynchroConnection {
 
 
 impl SynchroConnection {
-    pub fn new(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(addr: SocketAddr, cb: NewCallbackFn) {
+        task::spawn(async move {
+            let stream_result = TcpStream::connect(&addr).await;
+            match stream_result {
+                Ok(stream) => cb(Ok(SynchroConnection::from_existing(stream))),
+                Err(e) => cb(Err(e)),
+            }
+        });
+    }
+
+    pub fn new_blocking(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let connection = task::block_on(TcpStream::connect(&addr))?;
 
         Ok(SynchroConnection::from_existing(connection))
@@ -195,6 +206,12 @@ impl SynchroConnection {
             sender.unbounded_send(Bytes::new())?;
         }
         Ok(())
+    }
+}
+
+impl Drop for SynchroConnection {
+    fn drop(&mut self) {
+        println!("Dropped connection");
     }
 }
 

@@ -127,7 +127,7 @@ unsafe impl Sync for Context {}
 unsafe impl Send for Context {}
 
 #[no_mangle]
-pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16) -> *mut SynchroConnection {
+pub unsafe extern fn synchro_connection_new_blocking(addr: *const c_char, port: u16) -> *mut SynchroConnection {
     assert!(!addr.is_null());
     let addr = CStr::from_ptr(addr);
 
@@ -135,14 +135,39 @@ pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16) -> *
         let addr = addr.to_str()?;
         let addr: SocketAddr = format!("{}:{}", addr, port).parse()?;
 
-        let conn = SynchroConnection::new(addr)?;
+        let conn = SynchroConnection::new_blocking(addr)?;
         Ok(Box::into_raw(Box::new(conn)))
     }();
     result.unwrap_or_else(|error|{
-        println!("Error: {}", error);
+        println!("Error connecting to server: {}", error);
         std::ptr::null_mut()
     })
 }
+
+#[no_mangle]
+pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16, callback: extern fn(*mut SynchroConnection, Context), ctx: Context) {
+    assert!(!addr.is_null());
+    let addr = CStr::from_ptr(addr);
+
+    let result = || -> Result<(), Box<dyn std::error::Error>> {
+        let addr = addr.to_str()?;
+        let addr: SocketAddr = format!("{}:{}", addr, port).parse()?;
+
+        let cb = move |conn_result: Result<SynchroConnection, std::io::Error>| {
+            match conn_result {
+                Ok(conn) => callback(Box::into_raw(Box::new(conn)), ctx),
+                Err(e) => println!("Error connecting to server: {}", e),
+            }
+        };
+
+        SynchroConnection::new(addr, Arc::new(cb));
+        Ok(())
+    }();
+    result.unwrap_or_else(|e| {
+        println!("Error connecting to server: {}", e);
+    });
+}
+
 
 #[no_mangle]
 pub unsafe extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, callback: extern fn(Synchro_Event, Context), ctx: Context)
@@ -169,9 +194,9 @@ pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
 #[no_mangle]
 pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
-    let connection = &mut *ptr;
+    let mut connection = Box::from_raw(ptr);
 
-    connection.run_blocking();
+    connection.run();
 }
 
 #[no_mangle]
