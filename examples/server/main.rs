@@ -32,56 +32,6 @@ impl ClientInfo {
 
 type ClientHashmapArc = Arc<Mutex<HashMap<SocketAddr, ClientInfo>>>;
 
-struct Client {
-    synchro_conn: Arc<Mutex<SynchroConnection>>,
-    addr: SocketAddr,
-    client_hashmap: ClientHashmapArc,
-}
-
-impl Client {
-    fn new(
-        socket: TcpStream,
-        client_hashmap: ClientHashmapArc,
-    ) -> Self {
-        let addr = socket.peer_addr().unwrap();
-        println!("Client connected: {}", addr);
-
-        client_hashmap.lock().unwrap().insert(addr, ClientInfo::new_empty());
-
-        let synchro_conn = Arc::new(Mutex::new(SynchroConnection::from_existing(socket)));
-
-        let callback_client_hashmap = client_hashmap.clone();
-        synchro_conn.lock().unwrap().set_callback(Arc::new(move |event: Event| {
-            receive_event_from_client(event, &callback_client_hashmap, &addr);
-        }));
-
-        Client {
-            synchro_conn,
-            addr,
-            client_hashmap,
-        }
-    }
-
-    fn run(&mut self) {
-        // Run internal sender and receiver
-        self.synchro_conn.lock().unwrap().run();
-
-        // Run server-side command forwarder
-        let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Command>();
-        self.client_hashmap.lock().unwrap().get_mut(&self.addr).unwrap().unbounded_sender.replace(unbounded_sender);
-
-        task::spawn(send_cmd_to_client(self.synchro_conn.clone(), unbounded_receiver));
-    }
-}
-
-impl Drop for Client {
-    fn drop(&mut self) {
-        println!("Dropped client {}", self.addr);
-        self.client_hashmap.lock().unwrap().remove(&self.addr);
-        send_client_list_to_all(&self.client_hashmap).unwrap();
-    }
-}
-
 fn receive_event_from_client(event: Event, client_hashmap: &ClientHashmapArc, addr: &SocketAddr) {
     match event {
         Event::CommandReceived { command: cmd } => {
@@ -135,21 +85,47 @@ async fn send_cmd_to_client(synchro_conn: Arc<Mutex<SynchroConnection>>, mut unb
     }
 }
 
-#[async_std::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    task::block_on(accept_loop())
+}
+
+async fn accept_loop() -> Result<(), Box<dyn std::error::Error>> {
     let listener = start_server(32019).await?;
-    println!("Server started sucessfully on port {}", listener.local_addr()?.port());
+    println!("Server listening on port {}", listener.local_addr()?.port());
 
     let client_hashmap: ClientHashmapArc = Arc::new(Mutex::new(HashMap::new()));
 
     while let Some(stream) = listener.incoming().next().await {
         let stream = stream?;
 
-        let mut client = Client::new(stream, client_hashmap.clone());
-        client.run();
+        client_connected(stream, client_hashmap.clone()).await?;
 
-        send_client_list_to_all(&client_hashmap).unwrap();
+        send_client_list_to_all(&client_hashmap)?;
     }
+    Ok(())
+}
+
+async fn client_connected(socket: TcpStream, client_hashmap: ClientHashmapArc) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = socket.peer_addr()?;
+    println!("Client connected: {}", addr);
+
+    client_hashmap.lock().unwrap().insert(addr, ClientInfo::new_empty());
+
+    let synchro_conn = Arc::new(Mutex::new(SynchroConnection::from_existing(socket)));
+
+    synchro_conn.lock().unwrap().run().await;
+
+    let callback_client_hashmap = client_hashmap.clone();
+    synchro_conn.lock().unwrap().set_callback(Arc::new(move |event: Event| {
+        receive_event_from_client(event, &callback_client_hashmap, &addr);
+    }));
+
+    let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Command>();
+    client_hashmap.lock().unwrap().get_mut(&addr).unwrap().unbounded_sender.replace(unbounded_sender);
+
+    task::spawn(send_cmd_to_client(synchro_conn.clone(), unbounded_receiver));
+
+    println!("end here");
     Ok(())
 }
 

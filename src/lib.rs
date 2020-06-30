@@ -180,14 +180,12 @@ impl SynchroConnection {
         }
     }
 
-    pub fn run(&mut self) {
+    pub async fn run(&mut self) {
         let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Bytes>();
         self.unbounded_sender = Some(unbounded_sender);
         
-        task::spawn(receive_data(self.stream.clone(), self.callback.clone()));
-        task::spawn(send_data(self.stream.clone(), unbounded_receiver));
-
-        self.unbounded_sender = None;
+        task::spawn(receive_loop(self.stream.clone(), self.callback.clone()));
+        task::spawn(send_loop(self.stream.clone(), unbounded_receiver));
     }
 
     pub fn send(
@@ -215,11 +213,14 @@ impl Drop for SynchroConnection {
     }
 }
 
-pub async fn receive_data(mut stream: Box<TcpStream>, callback: Option<CallbackFn>) -> Result<(), Box<std::io::Error>> {
+pub async fn receive_loop(mut stream: Box<TcpStream>, callback: Option<CallbackFn>) -> Result<(), Box<std::io::Error>> {
     loop {
         // 2 bytes for u16
         let mut buf = BytesMut::with_capacity(2);
-        stream.read_exact(buf.as_mut()).await?;
+        let mut vec: Vec<u8> = vec!();
+        // stream.read_exact(buf.as_mut()).await?;
+        stream.read_to_end(&mut vec).await?;
+        println!("{:?}", vec);
         let anticipated_message_length = buf.get_u16();
 
         let mut buf = BytesMut::with_capacity(anticipated_message_length as usize);
@@ -234,7 +235,7 @@ pub async fn receive_data(mut stream: Box<TcpStream>, callback: Option<CallbackF
     }
 }
 
-pub async fn send_data(mut stream: Box<TcpStream>, mut unbounded_receiver: mpsc::UnboundedReceiver<Bytes>) -> Result<(), Box<std::io::Error>> {
+pub async fn send_loop(mut stream: Box<TcpStream>, mut unbounded_receiver: mpsc::UnboundedReceiver<Bytes>) -> Result<(), Box<std::io::Error>> {
     while let Some(data) = unbounded_receiver.next().await {
         if data.is_empty() {
             break;
