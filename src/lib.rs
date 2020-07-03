@@ -180,12 +180,17 @@ impl SynchroConnection {
         }
     }
 
-    pub async fn run(&mut self) {
+    pub fn run(&mut self) -> task::JoinHandle<()> {
         let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Bytes>();
         self.unbounded_sender = Some(unbounded_sender);
         
-        task::spawn(receive_loop(self.stream.clone(), self.callback.clone()));
-        task::spawn(send_loop(self.stream.clone(), unbounded_receiver));
+        let stream_clone0 = self.stream.clone();
+        let stream_clone1 = self.stream.clone();
+        let callback_clone = self.callback.clone();
+        task::spawn(async move {
+            task::spawn(send_loop(stream_clone0, unbounded_receiver));
+            receive_loop(stream_clone1, callback_clone).await.unwrap();
+        })
     }
 
     pub fn send(
@@ -270,17 +275,6 @@ pub fn get_server_list(url: Option<&str>) -> Result<Vec<Server>, surf::Error> {
     let body: SynchroJsonData = task::block_on(surf::get(url).recv_json())?;
 
     Ok(body.servers)
-}
-
-fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
-where
-    F: Future<Output = Result<(), Box<std::io::Error>>> + Send + 'static,
-{
-    task::spawn(async move {
-        if let Err(e) = fut.await {
-            eprintln!("{}", e)
-        }
-    })
 }
 
 #[cfg(test)]

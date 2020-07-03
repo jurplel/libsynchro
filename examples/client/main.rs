@@ -24,12 +24,13 @@ async fn connect() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = addr_str.parse()?;
     let mut conn = SynchroConnection::new_async(addr).await?;
 
-    conn.run().await;
+    let handle = conn.run();
 
     // Set name for test purposes
     let name = String::from("Rusty Shackleford");
     conn.send(libsynchro::Command::SetName {desired_name: name})?;
 
-    std::thread::park();
+    handle.await;
+
     Ok(())
 }

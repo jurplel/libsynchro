@@ -8,6 +8,8 @@ use std::ffi::CString;
 use std::net::SocketAddr;
 use std::os::raw::c_char;
 
+use async_std::task;
+
 use libsynchro::{Command, Event, SynchroConnection};
 
 #[repr(C)]
@@ -181,6 +183,9 @@ pub unsafe extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection
     };
 
     connection.set_callback(Arc::new(cb));
+
+    // Re-release memory
+    Box::into_raw(connection);
 }
 
 #[no_mangle]
@@ -192,11 +197,14 @@ pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
 }
 
 #[no_mangle]
-pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
+pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) { 
     assert!(!ptr.is_null());
     let mut connection = Box::from_raw(ptr);
 
-    connection.run();
+    let handle = connection.run();
+
+    // Re-release memory
+    Box::into_raw(connection);
 }
 
 #[no_mangle]

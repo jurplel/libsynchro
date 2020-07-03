@@ -113,7 +113,7 @@ async fn client_connected(socket: TcpStream, client_hashmap: ClientHashmapArc) -
 
     let synchro_conn = Arc::new(Mutex::new(SynchroConnection::from_existing(socket)));
 
-    synchro_conn.lock().unwrap().run().await;
+    synchro_conn.lock().unwrap().run();
 
     let callback_client_hashmap = client_hashmap.clone();
     synchro_conn.lock().unwrap().set_callback(Arc::new(move |event: Event| {
