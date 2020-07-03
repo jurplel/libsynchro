@@ -99,6 +99,7 @@ impl Synchro_Command {
 #[derive(Debug)]
 pub enum Synchro_Event {
     CommandReceived { command: Synchro_Command },
+    ConnectionClosed,
 }
 
 impl Synchro_Event {
@@ -106,7 +107,8 @@ impl Synchro_Event {
         match event {
             Event::CommandReceived { command } => Synchro_Event::CommandReceived {
                 command: Synchro_Command::from_command(command)
-            }
+            },
+            Event::ConnectionClosed => Synchro_Event::ConnectionClosed
         }
     }
 
@@ -114,7 +116,8 @@ impl Synchro_Event {
         match self {
             Synchro_Event::CommandReceived { command } => Event::CommandReceived {
                 command: command.into_command()
-            }
+            },
+            Synchro_Event::ConnectionClosed => Event::ConnectionClosed
         }
     }
 }
@@ -173,7 +176,7 @@ pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16, call
 pub unsafe extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection, callback: extern fn(Synchro_Event, Context), ctx: Context)
 {    
     assert!(!ptr.is_null());
-    let mut connection = Box::from_raw(ptr);
+    let connection = &mut *ptr;
     let cb = move |event: Event| {
         let event = Synchro_Event::from_event(event);
         println!("Event going to callback {:?}", event);
@@ -181,15 +184,12 @@ pub unsafe extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection
     };
 
     connection.set_callback(Arc::new(cb));
-
-    // Re-release memory
-    Box::into_raw(connection);
 }
 
 #[no_mangle]
 pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
-    let mut connection = Box::from_raw(ptr);
+    let connection = Box::from_raw(ptr);
 
     connection.destroy().unwrap();
 }
@@ -197,12 +197,9 @@ pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
 #[no_mangle]
 pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) { 
     assert!(!ptr.is_null());
-    let mut connection = Box::from_raw(ptr);
+    let connection = &mut *ptr;
 
     connection.run();
-
-    // Re-release memory
-    Box::into_raw(connection);
 }
 
 #[no_mangle]
