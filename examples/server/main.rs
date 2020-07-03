@@ -75,6 +75,11 @@ fn receive_event_from_client(event: Event, client_hashmap: &ClientHashmapArc, ad
                     }
                 }
             }
+        },
+        Event::ConnectionClosed => {
+            println!("Connection closed for client: {}", addr);
+            client_hashmap.lock().unwrap().remove(addr);
+            send_client_list_to_all(&client_hashmap).unwrap();
         }
     }
 }
@@ -113,19 +118,19 @@ async fn client_connected(socket: TcpStream, client_hashmap: ClientHashmapArc) -
 
     let synchro_conn = Arc::new(Mutex::new(SynchroConnection::from_existing(socket)));
 
-    synchro_conn.lock().unwrap().run();
-
     let callback_client_hashmap = client_hashmap.clone();
     synchro_conn.lock().unwrap().set_callback(Arc::new(move |event: Event| {
         receive_event_from_client(event, &callback_client_hashmap, &addr);
     }));
+
+    synchro_conn.lock().unwrap().run();
+
 
     let (unbounded_sender, unbounded_receiver) = mpsc::unbounded::<Command>();
     client_hashmap.lock().unwrap().get_mut(&addr).unwrap().unbounded_sender.replace(unbounded_sender);
 
     task::spawn(send_cmd_to_client(synchro_conn.clone(), unbounded_receiver));
 
-    println!("end here");
     Ok(())
 }
 

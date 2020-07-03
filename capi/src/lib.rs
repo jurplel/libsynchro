@@ -8,8 +8,6 @@ use std::ffi::CString;
 use std::net::SocketAddr;
 use std::os::raw::c_char;
 
-use async_std::task;
-
 use libsynchro::{Command, Event, SynchroConnection};
 
 #[repr(C)]
@@ -201,7 +199,7 @@ pub unsafe extern fn synchro_connection_run(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
     let mut connection = Box::from_raw(ptr);
 
-    let handle = connection.run();
+    connection.run();
 
     // Re-release memory
     Box::into_raw(connection);

@@ -129,6 +129,7 @@ impl Command {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Event {
     CommandReceived { command: Command },
+    ConnectionClosed,
 }
 
 pub type NewCallbackFn = Arc<dyn Fn(Result<SynchroConnection, std::io::Error>) + Sync + Send>;
@@ -189,7 +190,7 @@ impl SynchroConnection {
         let callback_clone = self.callback.clone();
         task::spawn(async move {
             task::spawn(send_loop(stream_clone0, unbounded_receiver));
-            receive_loop(stream_clone1, callback_clone).await.unwrap();
+            receive_loop(stream_clone1, callback_clone).await;
         })
     }
 
@@ -218,28 +219,39 @@ impl Drop for SynchroConnection {
     }
 }
 
-pub async fn receive_loop(mut stream: Box<TcpStream>, callback: Option<CallbackFn>) -> Result<(), Box<std::io::Error>> {
+pub async fn receive_loop(mut stream: Box<TcpStream>, callback: Option<CallbackFn>) {
     println!("Start receive_loop");
     loop {
-        println!("0");
-        // 2 bytes for u16
+        // Get 2 byte u16 that tells the size of the rest of the command
         let mut buf = BytesMut::with_capacity(2);
         buf.resize(2, 0);
-        stream.read_exact(buf.as_mut()).await?;
+        if let Err(e) = stream.read_exact(buf.as_mut()).await {
+            eprintln!("Error in receive loop: {:?}", e);
+            break;
+        }
+
         let anticipated_message_length = buf.get_u16();
 
-        println!("1");
-
+        // Get the rest of the command and convert it into a usable object
         let mut buf = BytesMut::with_capacity(anticipated_message_length as usize);
         buf.resize(anticipated_message_length as usize, 0);
-        stream.read_exact(buf.as_mut()).await?;
+        if let Err(e) = stream.read_exact(buf.as_mut()).await {
+            eprintln!("Error in receive loop: {:?}", e);
+            break;
+        }
+        
         let command = Command::from_buf(buf);
         
         println!("Received {:?}", command);
 
+        // Send received command to callback
         if let Some(cb) = &callback {
             (&cb)(Event::CommandReceived { command });
         }
+    };
+    // Send connection closed event to callback
+    if let Some(cb) = &callback {
+        (&cb)(Event::ConnectionClosed);
     }
 }
 
