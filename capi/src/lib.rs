@@ -189,7 +189,7 @@ pub unsafe extern fn synchro_connection_set_callback(ptr: *mut SynchroConnection
 #[no_mangle]
 pub unsafe extern fn synchro_connection_free(ptr: *mut SynchroConnection) {
     assert!(!ptr.is_null());
-    let connection = Box::from_raw(ptr);
+    let mut connection = Box::from_raw(ptr);
 
     connection.destroy().unwrap();
 }
