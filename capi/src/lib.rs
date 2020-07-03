@@ -159,7 +159,10 @@ pub unsafe extern fn synchro_connection_new(addr: *const c_char, port: u16, call
         let cb = move |conn_result: Result<SynchroConnection, std::io::Error>| {
             match conn_result {
                 Ok(conn) => callback(Box::into_raw(Box::new(conn)), ctx),
-                Err(e) => println!("Error connecting to server: {}", e),
+                Err(e) => {
+                    println!("Error connecting to server: {}", e);
+                    callback(std::ptr::null_mut(), ctx);
+                }
             }
         };
 
